@@ -1,8 +1,35 @@
 :root {
   font-family: Arial, sans-serif;
-  color: #1c1917;
-  background: #f5f5f4;
   font-synthesis: none;
+
+  --color-text: #1c1917;
+  --color-bg: #f5f5f4;
+  --color-card: #fff;
+  --color-card-border: #e7e5e4;
+  --color-card-shadow: rgb(28 25 23 / 8%);
+  --color-input-border: #d6d3d1;
+  --color-muted: #78716c;
+  --color-accent: #2563eb;
+  --color-accent-text: #fff;
+  --color-focus: #93c5fd;
+  --color-danger: #dc2626;
+
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+[data-theme='dark'] {
+  --color-text: #f5f5f4;
+  --color-bg: #1c1917;
+  --color-card: #292524;
+  --color-card-border: #44403c;
+  --color-card-shadow: rgb(0 0 0 / 40%);
+  --color-input-border: #44403c;
+  --color-muted: #a8a29e;
+  --color-accent: #3b82f6;
+  --color-accent-text: #fff;
+  --color-focus: #60a5fa;
+  --color-danger: #f87171;
 }
 
 * {
@@ -35,15 +62,36 @@ button {
   width: min(100%, 560px);
   margin-top: 8vh;
   padding: 24px;
-  border: 1px solid #e7e5e4;
+  border: 1px solid var(--color-card-border);
   border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgb(28 25 23 / 8%);
+  background: var(--color-card);
+  box-shadow: 0 8px 24px var(--color-card-shadow);
 }
 
 h1 {
   margin: 0 0 20px;
   font-size: 1.6rem;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.card-header h1 {
+  margin: 0;
+}
+
+.theme-toggle {
+  flex: none;
+  padding: 8px 12px;
+  border: 1px solid var(--color-input-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: transparent;
 }
 
 form {
@@ -55,21 +103,23 @@ form input {
   min-width: 0;
   flex: 1;
   padding: 11px 12px;
-  border: 1px solid #d6d3d1;
+  border: 1px solid var(--color-input-border);
   border-radius: 8px;
+  color: var(--color-text);
+  background: var(--color-card);
 }
 
 form button {
   padding: 11px 16px;
   border: 0;
   border-radius: 8px;
-  color: #fff;
-  background: #2563eb;
+  color: var(--color-accent-text);
+  background: var(--color-accent);
 }
 
 input:focus-visible,
 button:focus-visible {
-  outline: 3px solid #93c5fd;
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -85,7 +135,7 @@ li {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 0;
-  border-bottom: 1px solid #e7e5e4;
+  border-bottom: 1px solid var(--color-card-border);
 }
 
 li label {
@@ -100,7 +150,7 @@ li span {
 }
 
 .completed {
-  color: #78716c;
+  color: var(--color-muted);
   text-decoration: line-through;
 }
 
@@ -108,13 +158,13 @@ li span {
   flex: none;
   padding: 6px 8px;
   border: 0;
-  color: #dc2626;
+  color: var(--color-danger);
   background: transparent;
 }
 
 .empty {
   margin: 24px 0 4px;
-  color: #78716c;
+  color: var(--color-muted);
   text-align: center;
 }
 
