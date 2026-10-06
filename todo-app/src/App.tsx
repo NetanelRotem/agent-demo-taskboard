@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 
 type Todo = {
   id: number
@@ -6,9 +6,36 @@ type Todo = {
   completed: boolean
 }
 
+type Theme = 'light' | 'dark'
+
+const THEME_STORAGE_KEY = 'theme'
+
+function getInitialTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
 function App() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [text, setText] = useState('')
+  const [theme, setTheme] = useState<Theme>(getInitialTheme)
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme)
+    } catch {
+      // Storage unavailable; theme still applies for this session.
+    }
+  }, [theme])
+
+  function toggleTheme() {
+    setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
+  }
 
   function addTodo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -38,7 +65,21 @@ function App() {
   return (
     <main className="app">
       <section className="card" aria-labelledby="title">
-        <h1 id="title">המשימות שלי</h1>
+        <div className="card-header">
+          <h1 id="title">המשימות שלי</h1>
+          <button
+            className="theme-toggle"
+            type="button"
+            onClick={toggleTheme}
+            aria-label={
+              theme === 'dark'
+                ? 'החלפה למצב בהיר'
+                : 'החלפה למצב כהה'
+            }
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+        </div>
 
         <form onSubmit={addTodo}>
           <label className="sr-only" htmlFor="new-todo">
