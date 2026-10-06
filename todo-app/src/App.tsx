@@ -77,7 +77,7 @@ function App() {
                 : 'החלפה למצב כהה'
             }
           >
-            {theme === 'dark' ? '☀️' : '🌙'}
+            {theme === 'dark' ? '☀️' : '🍎'}
           </button>
         </div>
 
