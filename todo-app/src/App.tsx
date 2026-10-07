@@ -171,7 +171,7 @@ function App() {
                       onClick={() => deleteTodo(todo.id)}
                       aria-label={`מחיקת ${todo.text}`}
                     >
-                      מחיקה
+                      🗑️ מחיקה
                     </button>
                   )}
                 </li>
