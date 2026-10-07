@@ -210,6 +210,72 @@ li span {
   text-align: center;
 }
 
+.celebration {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -20px;
+  border-radius: 2px;
+  animation-name: confetti-fall;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes confetti-fall {
+  from {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  to {
+    transform: translateY(110vh) rotate(720deg);
+  }
+}
+
+.celebration-message {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  margin: 0;
+  padding: 12px 20px;
+  border: 1px solid var(--color-card-border);
+  border-radius: 10px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  background: var(--color-card);
+  box-shadow: 0 8px 24px var(--color-card-shadow);
+  transform: translateX(-50%);
+  animation: message-pop 0.4s ease-out;
+}
+
+@keyframes message-pop {
+  from {
+    opacity: 0;
+    scale: 0.8;
+  }
+
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece {
+    display: none;
+  }
+
+  .celebration-message {
+    animation: none;
+  }
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
