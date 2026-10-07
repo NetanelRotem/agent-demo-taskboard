@@ -108,7 +108,7 @@ class WorkspaceManager:
         )
         return env
 
-    async def prepare(self, run_id: str, issue_number: int) -> tuple[str, Path]:
+    async def prepare(self, run_id: str, issue_number: int, repo: str = "") -> tuple[str, Path]:
         branch = f"agent/issue-{issue_number}-{run_id[:8]}"
         worktree = (self.settings.worktrees_dir / f"issue-{issue_number}-{run_id[:8]}").resolve()
         worktree.parent.mkdir(parents=True, exist_ok=True)
@@ -181,10 +181,9 @@ class WorkspaceManager:
                 changed_files=changed,
             )
 
-        todo_dir = worktree / self.settings.todo_path
         checks: list[dict] = []
         for command in (["npm", "run", "lint"], ["npm", "run", "build"]):
-            code, out, err = await _run(command, todo_dir, timeout=300, check=False)
+            code, out, err = await self._run_check(command, worktree)
             checks.append(
                 {
                     "command": " ".join(command),
@@ -208,6 +207,21 @@ class WorkspaceManager:
             checks=checks,
             revision=revision,
         )
+
+    async def suspend(self, worktree: Path) -> None:
+        """Release resources while a run waits; local worktrees cost nothing idle."""
+
+    async def destroy(self, worktree: Path) -> None:
+        """Remove a run's workspace once its PR is merged or closed."""
+        if worktree.exists():
+            await _run(
+                ["git", "worktree", "remove", "--force", str(worktree)],
+                self.settings.repository_path,
+                check=False,
+            )
+
+    async def _run_check(self, command: list[str], worktree: Path) -> tuple[int, str, str]:
+        return await _run(command, worktree / self.settings.todo_path, timeout=300, check=False)
 
     async def commit_and_push(self, worktree: Path, branch: str, message: str) -> str:
         await _run(["git", "add", "--", self.settings.todo_path], worktree)

@@ -27,6 +27,7 @@ RESULT_EXTENSION = Path(__file__).resolve().parent / "pi_extensions" / "submit_r
 PLAN_STATUSES = ("ready", "needs_input", "failed")
 IMPLEMENT_STATUSES = ("completed", "needs_input", "failed")
 CancelCheck = Callable[[str], Awaitable[bool]]
+EVENT_LINE_LIMIT = 64 * 1024 * 1024
 
 
 def _assistant_text(message: dict) -> str:
@@ -115,6 +116,46 @@ class PiRunner:
             unique.append(entry)
         return os.pathsep.join(unique)
 
+    def _pi_arguments(
+        self, *, session_id: str, tools: str, session_dir: str, extension: str
+    ) -> list[str]:
+        return [
+            "--mode", "json",
+            "--provider", "openrouter",
+            "--model", self.settings.openrouter_model,
+            "--session-id", session_id,
+            "--session-dir", session_dir,
+            "--tools", f"{tools},{RESULT_TOOL}",
+            "--no-extensions",
+            "--extension", extension,
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-context-files",
+        ]
+
+    def _command(
+        self, *, session_id: str, worktree: Path, tools: str, statuses: tuple[str, ...]
+    ) -> tuple[list[str], str | None, dict[str, str]]:
+        """Return (argv, cwd, env) for the process that runs Pi."""
+        executable = shutil.which(self.settings.pi_command) or self.settings.pi_command
+        self.settings.pi_sessions_dir.mkdir(parents=True, exist_ok=True)
+        args = [executable] + self._pi_arguments(
+            session_id=session_id,
+            tools=tools,
+            session_dir=str(self.settings.pi_sessions_dir),
+            extension=str(RESULT_EXTENSION),
+        )
+        return args, str(worktree), self._environment(statuses)
+
+    async def _after_kill(self, worktree: Path) -> None:
+        """Hook for runners whose Pi process outlives the local one."""
+
+    def _parse_event(self, raw: bytes) -> dict | None:
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PiError(f"Invalid JSONL event from Pi: {exc}") from exc
+
     async def run(
         self,
         *,
@@ -125,31 +166,21 @@ class PiRunner:
         prompt: str,
         read_only: bool,
     ) -> PiResult:
-        executable = shutil.which(self.settings.pi_command) or self.settings.pi_command
         tools = "read,grep,find,ls" if read_only else "read,bash,edit,write,grep,find,ls"
         statuses = PLAN_STATUSES if read_only else IMPLEMENT_STATUSES
-        args = [
-            executable,
-            "--mode", "json",
-            "--provider", "openrouter",
-            "--model", self.settings.openrouter_model,
-            "--session-id", session_id,
-            "--session-dir", str(self.settings.pi_sessions_dir),
-            "--tools", f"{tools},{RESULT_TOOL}",
-            "--no-extensions",
-            "--extension", str(RESULT_EXTENSION),
-            "--no-skills",
-            "--no-prompt-templates",
-            "--no-context-files",
-        ]
-        self.settings.pi_sessions_dir.mkdir(parents=True, exist_ok=True)
+        args, cwd, env = self._command(
+            session_id=session_id, worktree=worktree, tools=tools, statuses=statuses
+        )
         process = await asyncio.create_subprocess_exec(
             *args,
-            cwd=str(worktree),
-            env=self._environment(statuses),
+            cwd=cwd,
+            env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # One JSONL event can carry a whole file; the 64 KiB default would
+            # make readline fail and leave Pi blocked on a full stdout pipe.
+            limit=EVENT_LINE_LIMIT,
         )
         assert process.stdin and process.stdout and process.stderr
         process.stdin.write(prompt.encode("utf-8"))
@@ -166,10 +197,9 @@ class PiRunner:
                 raw = await process.stdout.readline()
                 if not raw:
                     break
-                try:
-                    event = json.loads(raw.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise PiError(f"Invalid JSONL event from Pi: {exc}") from exc
+                event = self._parse_event(raw)
+                if event is None:
+                    continue
                 event_type = str(event.get("type", "unknown"))
                 if self.event_sink:
                     await self.event_sink(run_id, phase, event)
@@ -198,11 +228,21 @@ class PiRunner:
                 if remaining <= 0:
                     process.kill()
                     await process.wait()
+                    await self._after_kill(worktree)
                     await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
                     raise PiError(f"Pi timed out after {self.settings.pi_timeout_seconds} seconds")
+                if stdout_task.done() and stdout_task.exception() is not None:
+                    # Nobody reads stdout any more, so Pi would block forever.
+                    process.kill()
+                    await process.wait()
+                    await self._after_kill(worktree)
+                    stderr_task.cancel()
+                    await asyncio.gather(stderr_task, return_exceptions=True)
+                    raise PiError(f"Reading Pi output failed: {stdout_task.exception()}")
                 if self.cancel_check and await self.cancel_check(run_id):
                     process.kill()
                     await process.wait()
+                    await self._after_kill(worktree)
                     await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
                     raise PiStopped("Stop requested by an authorized user")
                 try:
@@ -213,6 +253,7 @@ class PiRunner:
             if process.returncode is None:
                 process.kill()
                 await process.wait()
+                await asyncio.shield(self._after_kill(worktree))
             stdout_task.cancel()
             stderr_task.cancel()
             await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)

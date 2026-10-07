@@ -159,3 +159,37 @@ def test_irrelevant_events_are_ignored(client, event, payload):
     response = post(client, payload, event=event, delivery=f"ignored-{event}-{id(payload)}")
     assert response.status_code == 202
     assert response.json() == {"status": "ignored"}
+
+
+@pytest.mark.parametrize("merged,outcome", [(True, "merged"), (False, "closed")])
+def test_closed_pull_request_enqueues_cleanup(client, service, merged, outcome):
+    payload = {
+        "action": "closed",
+        "pull_request": {"number": 7, "id": 4242, "merged": merged},
+        "repository": {"full_name": "acme/todo"},
+        "sender": {"login": "alice", "type": "User"},
+    }
+    response = client.post(
+        "/webhooks/github",
+        content=json.dumps(payload),
+        headers={"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": f"close-{outcome}"},
+    )
+    assert response.json() == {"status": "accepted"}
+    item = service.items[-1]
+    assert (item.command.name, item.command.text, item.pull_number) == ("cleanup", outcome, 7)
+
+
+def test_other_pull_request_actions_are_ignored(client, service):
+    payload = {
+        "action": "opened",
+        "pull_request": {"number": 7, "id": 4242},
+        "repository": {"full_name": "acme/todo"},
+        "sender": {"login": "alice", "type": "User"},
+    }
+    response = client.post(
+        "/webhooks/github",
+        content=json.dumps(payload),
+        headers={"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "open-1"},
+    )
+    assert response.json() == {"status": "ignored"}
+    assert service.items == []

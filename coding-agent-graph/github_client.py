@@ -73,6 +73,13 @@ class GitHubClient:
         )
         return int(result["id"])
 
+    async def add_reaction(self, repo: str, comment_id: int, content: str = "+1") -> None:
+        await self._request(
+            "POST",
+            f"/repos/{repo}/issues/comments/{comment_id}/reactions",
+            json={"content": content},
+        )
+
     async def find_open_pr(self, repo: str, branch: str) -> dict | None:
         owner = repo.split("/", 1)[0]
         pulls = await self._request(
@@ -96,7 +103,7 @@ class GitHubClient:
                 "base": base,
                 "title": title,
                 "body": body,
-                "draft": True,
+                "draft": False,
             },
         )
 

@@ -46,6 +46,23 @@ class Settings:
     queue_size: int
     langfuse_enabled: bool = False
     require_plan_approval: bool = True
+    execution_mode: str = "local"
+    sbx_command: str = "sbx"
+    sandbox_kit: str = "docker.io/docker/sbx-kit-pi:latest"
+    sandbox_ttl: str = "24h"
+    sandbox_allow_network: tuple[str, ...] = (
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "raw.githubusercontent.com",
+        "openrouter.ai",
+    )
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -55,6 +72,10 @@ class Settings:
         )
         repository_value = os.getenv("AGENT_REPOSITORY_PATH") or str(project_root)
         data_dir = Path(data_dir_value)
+        execution_mode = os.getenv("EXECUTION_MODE", "local").strip().lower()
+        if execution_mode not in {"local", "cloud"}:
+            raise ValueError(f"EXECUTION_MODE must be 'local' or 'cloud', got {execution_mode!r}")
+        allow_network = tuple(sorted(_csv("SANDBOX_ALLOW_NETWORK"))) or cls.sandbox_allow_network
         return cls(
             github_token=_github_token(),
             authorized_users=_csv("AUTHORIZED_GITHUB_USERS"),
@@ -74,6 +95,13 @@ class Settings:
             not in {"0", "false", "no", "off"},
             require_plan_approval=os.getenv("REQUIRE_PLAN_APPROVAL", "true").lower()
             not in {"0", "false", "no", "off"},
+            execution_mode=execution_mode,
+            sbx_command=os.getenv("SBX_COMMAND", "sbx"),
+            sandbox_kit=os.getenv("SANDBOX_KIT", cls.sandbox_kit),
+            sandbox_ttl=os.getenv("SANDBOX_TTL", cls.sandbox_ttl),
+            sandbox_allow_network=allow_network,
+            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
         )
 
     @property

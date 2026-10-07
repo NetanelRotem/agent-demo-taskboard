@@ -176,7 +176,7 @@ async def test_github_issue_loader_follows_comment_pagination():
 
 
 @pytest.mark.asyncio
-async def test_github_creates_draft_pr_and_loads_review_comments():
+async def test_github_creates_ready_pr_and_loads_review_comments():
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -185,7 +185,7 @@ async def test_github_creates_draft_pr_and_loads_review_comments():
             return httpx.Response(200, json=[])
         if request.url.path == "/repos/a/b/pulls" and request.method == "POST":
             payload = json.loads(request.content)
-            assert payload["draft"] is True
+            assert payload["draft"] is False
             return httpx.Response(
                 201, json={"number": 42, "html_url": "https://example.test/pr/42"}
             )
@@ -384,6 +384,10 @@ async def test_stop_resumes_interrupt_after_database_reopen(tmp_path):
 class FakeGitHub:
     def __init__(self):
         self.comments = []
+        self.reactions = []
+
+    async def add_reaction(self, repo, comment_id, content="+1"):
+        self.reactions.append((repo, comment_id, content))
 
     async def post_comment(self, repo, issue_number, body):
         self.comments.append(body)
@@ -441,7 +445,7 @@ async def test_review_event_resumes_original_issue_run(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_verified_run_automatically_creates_draft_pr_and_saves_number(tmp_path):
+async def test_verified_run_automatically_creates_pr_and_saves_number(tmp_path):
     class Store:
         def __init__(self):
             self.values = {}
@@ -470,7 +474,7 @@ async def test_verified_run_automatically_creates_draft_pr_and_saves_number(tmp_
             self.comments = []
 
         async def create_pr(self, repo, branch, base, title, body):
-            return {"number": 42, "html_url": "https://example.test/pr/42", "draft": True}
+            return {"number": 42, "html_url": "https://example.test/pr/42", "draft": False}
 
         async def post_comment(self, repo, number, body):
             self.comments.append((number, body))
@@ -504,7 +508,7 @@ async def test_verified_run_automatically_creates_draft_pr_and_saves_number(tmp_
     }
     assert graph.store.values["status"] == "reviewing"
     assert graph.store.values["pr_number"] == 42
-    assert "Draft pull request" in graph.github.comments[0][1]
+    assert "Pull request ready" in graph.github.comments[0][1]
 
 
 def test_graph_routes_verified_work_to_pr_or_review_push(tmp_path):

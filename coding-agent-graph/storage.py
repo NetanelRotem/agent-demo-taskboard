@@ -77,6 +77,23 @@ class AgentStore:
                 payload_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                run_id TEXT,
+                repo TEXT,
+                issue_number INTEGER,
+                kind TEXT NOT NULL,
+                message TEXT NOT NULL,
+                data_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS events_run ON events(run_id, id);
+            CREATE TABLE IF NOT EXISTS telegram_topics (
+                repo TEXT NOT NULL,
+                issue_number INTEGER NOT NULL,
+                thread_id INTEGER NOT NULL,
+                PRIMARY KEY (repo, issue_number)
+            );
             """
         )
         await self._ensure_column("runs", "pr_number", "INTEGER")
@@ -269,7 +286,7 @@ class AgentStore:
         return dict(row) if row else None
 
     async def get_active_run(self, repo: str, issue_number: int) -> dict[str, Any] | None:
-        terminal = ("failed", "stopped", "published", "merged", "superseded")
+        terminal = ("failed", "stopped", "published", "merged", "closed", "superseded")
         placeholders = ",".join("?" for _ in terminal)
         cursor = await self._db().execute(
             f"""SELECT * FROM runs
@@ -322,6 +339,56 @@ class AgentStore:
         )
         await self._db().commit()
         return cursor.rowcount == 1
+
+    async def record_event(
+        self,
+        kind: str,
+        message: str,
+        *,
+        run_id: str | None = None,
+        repo: str | None = None,
+        issue_number: int | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        await self._db().execute(
+            """INSERT INTO events (created_at, run_id, repo, issue_number, kind, message, data_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                _now(), run_id, repo, issue_number, kind, message,
+                json.dumps(data or {}, ensure_ascii=False, default=str),
+            ),
+        )
+        await self._db().commit()
+
+    async def find_run_by_prefix(self, prefix: str) -> dict[str, Any] | None:
+        cursor = await self._db().execute(
+            "SELECT * FROM runs WHERE run_id LIKE ? ORDER BY created_at DESC LIMIT 1",
+            (f"{prefix}%",),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_telegram_topic(self, repo: str, issue_number: int) -> int | None:
+        cursor = await self._db().execute(
+            "SELECT thread_id FROM telegram_topics WHERE repo = ? AND issue_number = ?",
+            (repo, issue_number),
+        )
+        row = await cursor.fetchone()
+        return int(row["thread_id"]) if row else None
+
+    async def set_telegram_topic(self, repo: str, issue_number: int, thread_id: int | None) -> None:
+        if thread_id is None:
+            await self._db().execute(
+                "DELETE FROM telegram_topics WHERE repo = ? AND issue_number = ?",
+                (repo, issue_number),
+            )
+        else:
+            await self._db().execute(
+                """INSERT INTO telegram_topics (repo, issue_number, thread_id) VALUES (?, ?, ?)
+                   ON CONFLICT(repo, issue_number) DO UPDATE SET thread_id = excluded.thread_id""",
+                (repo, issue_number, thread_id),
+            )
+        await self._db().commit()
 
     async def record_pi_event(
         self, run_id: str, phase: str, event_type: str, payload: dict[str, Any]

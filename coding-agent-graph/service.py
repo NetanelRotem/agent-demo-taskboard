@@ -7,6 +7,7 @@ import os
 import sys
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -16,6 +17,7 @@ from langgraph.types import Command
 from agent_graph import CodingAgentGraph
 from agent_models import AgentCommand
 from config import Settings
+from events import EventLog, TelegramNotifier
 from github_client import GitHubClient
 from pi_runner import PiRunner
 from storage import AgentStore
@@ -43,7 +45,20 @@ class AgentService:
         self.settings = settings
         self.store = AgentStore(settings.database_path)
         self.github = github or GitHubClient(settings.github_token)
-        self.workspace = WorkspaceManager(settings)
+        self.telegram = (
+            TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id, self.store)
+            if settings.telegram_enabled
+            else None
+        )
+        self.events = EventLog(self.store, self.telegram, redact=self._redact)
+        self.sandbox = None
+        if settings.execution_mode == "cloud":
+            from cloud_sandbox import CloudWorkspaceManager, SandboxClient
+
+            self.sandbox = SandboxClient(settings, self.events)
+            self.workspace = CloudWorkspaceManager(settings, self.sandbox)
+        else:
+            self.workspace = WorkspaceManager(settings)
         self.queue: asyncio.Queue[tuple[int, WorkItem]] = asyncio.Queue(
             maxsize=settings.queue_size
         )
@@ -69,11 +84,22 @@ class AgentService:
         self.checkpoint_conn = await aiosqlite.connect(self.settings.database_path)
         self.checkpointer = AsyncSqliteSaver(self.checkpoint_conn)
         await self.checkpointer.setup()
-        pi = PiRunner(
-            self.settings,
-            event_sink=self._record_pi_event,
-            cancel_check=self._stop_requested,
-        )
+        if self.sandbox is not None:
+            from cloud_sandbox import CloudPiRunner
+
+            pi: PiRunner = CloudPiRunner(
+                self.settings,
+                event_sink=self._record_pi_event,
+                cancel_check=self._stop_requested,
+                sandbox=self.sandbox,
+            )
+            logger.info("Execution mode: cloud (Docker Cloud Sandboxes via sbx)")
+        else:
+            pi = PiRunner(
+                self.settings,
+                event_sink=self._record_pi_event,
+                cancel_check=self._stop_requested,
+            )
         self.agent_graph = CodingAgentGraph(
             self.settings,
             self.store,
@@ -81,7 +107,11 @@ class AgentService:
             pi,
             self.workspace,
             self.checkpointer,
+            events=self.events,
         )
+        if self.telegram:
+            self.telegram.start()
+            logger.info("Telegram notifications enabled")
         recovered = await self.store.recover_work_items(self.settings.queue_size)
         for job in recovered:
             self.queue.put_nowait((job["id"], self._deserialize_item(job["payload"])))
@@ -94,6 +124,8 @@ class AgentService:
             self.worker_task.cancel()
             await asyncio.gather(self.worker_task, return_exceptions=True)
         await self.github.close()
+        if self.telegram:
+            await self.telegram.close()
         if self.checkpoint_conn:
             await self.checkpoint_conn.close()
         await self.store.close()
@@ -159,7 +191,11 @@ class AgentService:
         if isinstance(value, list):
             return [self._redact(item) for item in value]
         if isinstance(value, str):
-            secrets = [self.settings.github_token, os.getenv("OPENROUTER_API_KEY", "")]
+            secrets = [
+                self.settings.github_token,
+                os.getenv("OPENROUTER_API_KEY", ""),
+                self.settings.telegram_bot_token,
+            ]
             for secret in secrets:
                 if secret:
                     value = value.replace(secret, "[REDACTED]")
@@ -188,7 +224,7 @@ class AgentService:
 
     async def enqueue(self, item: WorkItem, delivery_id: str) -> str:
         if not self.is_authorized(item.user):
-            return "ignored" if item.command.name == "review" else "forbidden"
+            return "ignored" if item.command.name in {"review", "cleanup"} else "forbidden"
         if self.queue.full():
             return "busy"
         item_id = await self.store.persist_work_item(
@@ -220,6 +256,7 @@ class AgentService:
                 attempts,
             )
             try:
+                await self._acknowledge(item)
                 await self.handle(item)
             except asyncio.CancelledError:
                 await self.store.mark_work_pending(item_id, "Worker cancelled during shutdown")
@@ -231,6 +268,12 @@ class AgentService:
                 else:
                     await self.store.mark_work_failed(item_id, str(exc))
                     await self._fail_active_run(item)
+                    await self.events.emit(
+                        "work_item_failed",
+                        f"`{item.command.name}` failed after 3 attempts: {str(exc)[:1500]}",
+                        repo=item.repo,
+                        issue_number=item.issue_number,
+                    )
                     try:
                         await self.github.post_comment(
                             item.repo,
@@ -245,6 +288,25 @@ class AgentService:
             finally:
                 self.queue.task_done()
                 await self._refill_queue()
+
+    async def _acknowledge(self, item: WorkItem) -> None:
+        """React with 👍 on the command comment so the user sees work has started."""
+        if item.command.name in {"review", "cleanup"}:
+            return
+        try:
+            await self.github.add_reaction(item.repo, item.comment_id, "+1")
+        except Exception:
+            logger.warning("Could not react to comment %s", item.comment_id, exc_info=True)
+
+    async def _suspend_workspace(self, run_id: str) -> None:
+        """The graph only returns when it waits for a human or has finished: nothing runs."""
+        run = await self.store.get_run(run_id)
+        if not run or not run.get("worktree"):
+            return
+        try:
+            await self.workspace.suspend(Path(run["worktree"]))
+        except Exception:
+            logger.warning("Could not suspend workspace for run %s", run_id[:8], exc_info=True)
 
     async def _refill_queue(self) -> None:
         available = self.settings.queue_size - self.queue.qsize()
@@ -314,6 +376,8 @@ class AgentService:
             await self._stop(item)
         elif item.command.name == "review":
             await self._review(item)
+        elif item.command.name == "cleanup":
+            await self._cleanup(item)
 
     async def _start(self, item: WorkItem) -> None:
         active = await self.store.get_active_run(item.repo, item.issue_number)
@@ -348,10 +412,17 @@ class AgentService:
             },
             self._config(thread_id, run_id, item, "start"),
         )
+        await self._suspend_workspace(run_id)
 
     async def _resume(self, item: WorkItem) -> None:
         request_id = item.command.request_id or ""
         request = await self.store.get_request(request_id)
+        if (
+            request
+            and request.get("status") == "resolved"
+            and await self._continue_interrupted_run(request, item)
+        ):
+            return
         if not request or request.get("status") != "pending":
             await self.github.post_comment(
                 item.repo, item.issue_number, f"Request `{request_id}` is missing, stale, or already resolved."
@@ -381,6 +452,51 @@ class AgentService:
             Command(resume=decision),
             self._config(run["thread_id"], run["run_id"], item, item.command.name),
         )
+        await self._suspend_workspace(run["run_id"])
+
+    async def _continue_interrupted_run(self, request: dict, item: WorkItem) -> bool:
+        """A restart can land between accepting a decision and finishing the work it
+        started. The recovered work item then finds its request already resolved; if
+        the graph is mid-step (not waiting on a human), continue from the checkpoint."""
+        response = json.loads(request.get("response_json") or "{}")
+        if response.get("action") not in {item.command.name, "requirements_changed"}:
+            return False
+        run = await self.store.get_run(request["run_id"])
+        if not run or run["repo"] != item.repo or run["issue_number"] != item.issue_number:
+            return False
+        config = self._config(run["thread_id"], run["run_id"], item, item.command.name)
+        snapshot = await self.agent_graph.graph.aget_state(config)
+        if not snapshot.next or any(task.interrupts for task in snapshot.tasks):
+            return False
+        logger.warning("Continuing interrupted run %s from its checkpoint", run["run_id"][:8])
+        await self.agent_graph.graph.ainvoke(None, config)
+        await self._suspend_workspace(run["run_id"])
+        return True
+
+    async def _cleanup(self, item: WorkItem) -> None:
+        """The PR was merged or closed: no review can follow, so drop the workspace."""
+        if item.pull_number is None:
+            return
+        run = await self.store.get_run_by_pr(item.repo, item.pull_number)
+        if not run:
+            return
+        if run.get("worktree"):
+            await self.workspace.destroy(Path(run["worktree"]))
+        outcome = "merged" if item.command.text == "merged" else "closed"
+        await self.store.update_run(run["run_id"], status=outcome)
+        await self.events.emit(
+            "pr_closed",
+            f"PR #{item.pull_number} {outcome}; workspace removed",
+            run_id=run["run_id"],
+            repo=item.repo,
+            issue_number=int(run["issue_number"]),
+        )
+        logger.info("PR %s#%s %s; removed workspace of run %s", item.repo, item.pull_number, outcome, run["run_id"][:8])
+        await self.github.post_comment(
+            item.repo,
+            item.pull_number,
+            f"PR {outcome}. The agent's workspace for run `{run['run_id'][:8]}` was removed.",
+        )
 
     async def _stop(self, item: WorkItem) -> None:
         run = await self.store.get_active_run(item.repo, item.issue_number)
@@ -396,6 +512,7 @@ class AgentService:
             )
         else:
             await self.store.update_run(run["run_id"], status="stopped")
+        await self._suspend_workspace(run["run_id"])
 
     async def _review(self, item: WorkItem) -> None:
         if item.pull_number is None or item.review_id is None:
@@ -450,6 +567,7 @@ class AgentService:
             self._config(review_thread_id, run["run_id"], trace_item, "review"),
         )
         logger.info("Review graph completed for run=%s", run["run_id"][:8])
+        await self._suspend_workspace(run["run_id"])
 
     def _config(
         self,

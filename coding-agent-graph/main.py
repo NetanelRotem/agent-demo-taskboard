@@ -67,6 +67,18 @@ def extract_command(event: str | None, payload: dict) -> dict | None:
             "comment_id": review.get("id"),
             "command": AgentCommand("review", text=str(review.get("body") or "")),
         }
+    if event == "pull_request" and payload.get("action") == "closed":
+        pull_request = payload.get("pull_request") or {}
+        return {
+            "repo": (payload.get("repository") or {}).get("full_name"),
+            "issue_number": pull_request.get("number"),
+            "pull_number": pull_request.get("number"),
+            "user": (payload.get("sender") or {}).get("login"),
+            "comment_id": pull_request.get("id"),
+            "command": AgentCommand(
+                "cleanup", text="merged" if pull_request.get("merged") else "closed"
+            ),
+        }
     return None
 
 

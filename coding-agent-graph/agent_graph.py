@@ -10,6 +10,7 @@ from langgraph.types import interrupt
 
 from agent_models import AgentState, IssueContext
 from config import Settings
+from events import NullEvents
 from github_client import GitHubClient
 from pi_runner import PiError, PiRunner, PiStopped
 from storage import AgentStore
@@ -20,11 +21,17 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _bullets(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items) or "- (no details)"
+
+
 def _format_plan(plan: list[str]) -> str:
     return "\n".join(f"{index}. {item}" for index, item in enumerate(plan, 1))
 
 
 class CodingAgentGraph:
+    events: Any = NullEvents()
+
     def __init__(
         self,
         settings: Settings,
@@ -33,13 +40,25 @@ class CodingAgentGraph:
         pi: PiRunner,
         workspace: WorkspaceManager,
         checkpointer: Any,
+        events: Any = None,
     ):
         self.settings = settings
         self.store = store
         self.github = github
         self.pi = pi
         self.workspace = workspace
+        self.events = events or NullEvents()
         self.graph = self._build().compile(checkpointer=checkpointer)
+
+    async def _emit(self, state: AgentState, kind: str, message: str, **data: Any) -> None:
+        await self.events.emit(
+            kind,
+            message,
+            run_id=state["run_id"],
+            repo=state["repo"],
+            issue_number=state["issue_number"],
+            data=data,
+        )
 
     def _build(self) -> StateGraph:
         builder = StateGraph(AgentState)
@@ -55,7 +74,9 @@ class CodingAgentGraph:
         builder.add_node("push_review", self.push_review)
         builder.add_edge(START, "load_issue")
         builder.add_conditional_edges(
-            "load_issue", self.after_load, {"plan": "plan_with_pi", "review": "review"}
+            "load_issue",
+            self.after_load,
+            {"plan": "plan_with_pi", "review": "review", "finish": "finish"},
         )
         builder.add_conditional_edges(
             "plan_with_pi",
@@ -126,9 +147,25 @@ class CodingAgentGraph:
                 }
             )
             await self.store.update_run(state["run_id"], status="reading_review")
+            await self._emit(
+                state, "review_started",
+                f"Review on PR #{state.get('pr_number')} received; addressing the feedback",
+            )
             return update
 
-        branch, worktree = await self.workspace.prepare(state["run_id"], state["issue_number"])
+        await self._emit(
+            state, "run_started", f"Run started: {context.title}", title=context.title
+        )
+        try:
+            branch, worktree = await self.workspace.prepare(
+                state["run_id"], state["issue_number"], state["repo"]
+            )
+        except WorkspaceError as exc:
+            return {
+                **update,
+                "final_status": "failed",
+                "final_summary": f"Could not prepare the workspace: {exc}",
+            }
         update.update(
             {
                 "branch": branch,
@@ -149,8 +186,10 @@ class CodingAgentGraph:
         )
         return update
 
-    def after_load(self, state: AgentState) -> Literal["plan", "review"]:
-        return "review" if state.get("command_name") == "review" else "plan"
+    def after_load(self, state: AgentState) -> Literal["plan", "review", "finish"]:
+        if state.get("command_name") == "review":
+            return "review"
+        return "finish" if state.get("final_status") else "plan"
 
     async def plan_with_pi(self, state: AgentState) -> dict:
         context = IssueContext.model_validate(state["issue_context"])
@@ -192,6 +231,13 @@ The plan must be short and include acceptance criteria and concrete repository c
         auto_approved = pending_kind == "approval" and state.get("auto_approve", False)
         if auto_approved:
             await self._announce_auto_approved_plan(state, version, result.plan)
+        if pending_kind == "clarification":
+            await self._emit(state, "waiting_for_human", "Pi needs input:\n" + _bullets(result.questions))
+        else:
+            mode = "implementing without approval" if auto_approved else "waiting for approval"
+            await self._emit(
+                state, "plan_ready", f"Plan v{version} ({mode}):\n{_format_plan(result.plan)}"
+            )
         await self.store.update_run(
             state["run_id"],
             status="implementing" if auto_approved else "waiting_for_human",
@@ -213,7 +259,7 @@ The plan must be short and include acceptance criteria and concrete repository c
     ) -> None:
         content = (
             f"### Plan (v{version}) — implementing without approval\n\n{_format_plan(plan)}\n\n"
-            "Plan approval is disabled for this run; a draft PR will follow once checks pass. "
+            "Plan approval is disabled for this run; a pull request will follow once checks pass. "
             "Use `/agent stop` to cancel."
         )
         request_id = f"{state['run_id'][:8]}-p{version}-auto"
@@ -341,6 +387,7 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
 
         if result.status == "needs_input":
             await self.store.update_run(state["run_id"], status="waiting_for_human")
+            await self._emit(state, "waiting_for_human", "Pi needs input:\n" + _bullets(result.questions))
             return {
                 "attempt": attempt,
                 "pending_kind": "clarification",
@@ -412,7 +459,7 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
                 for item in verification["checks"]
                 if not item["passed"]
             )
-        prompt = f"""Address the submitted review on draft PR #{state.get('pr_number')}.
+        prompt = f"""Address the submitted review on PR #{state.get('pr_number')}.
 
 Review by {feedback.get('author', 'unknown')} ({feedback.get('state', 'commented')}):
 {feedback.get('body') or '(no summary)'}
@@ -451,6 +498,7 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
 
         if result.status == "needs_input":
             await self.store.update_run(state["run_id"], status="waiting_for_human")
+            await self._emit(state, "waiting_for_human", "Pi needs input:\n" + _bullets(result.questions))
             return {
                 "attempt": attempt,
                 "pending_kind": "clarification",
@@ -502,6 +550,18 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
                 revision=result.revision,
             )
         update: dict[str, Any] = {"verification": result.as_dict()}
+        if result.passed:
+            await self._emit(
+                state, "verification_passed",
+                "Checks passed. Changed: " + (", ".join(result.changed_files) or "nothing"),
+            )
+        else:
+            failed = next((item for item in result.checks if not item["passed"]), None)
+            detail = f"\n{failed['output'][-600:]}" if failed else ""
+            await self._emit(
+                state, "verification_failed",
+                f"Attempt {state.get('attempt', 0)}/{self.settings.max_attempts}: {result.summary}{detail}",
+            )
         if result.passed:
             update.update(
                 {
@@ -563,6 +623,8 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             comment_id = await self.github.post_comment(state["repo"], target_number, body)
             await self.store.set_request_comment(request_id, comment_id)
         await self.store.update_run(state["run_id"], status=status)
+        summary = state.get("final_summary") or state.get("pi_summary") or "Run finished."
+        await self._emit(state, "run_finished", f"Run {status}: {summary[:800]}")
         return {"final_status": status}
 
     async def publish_pr(self, state: AgentState) -> dict:
@@ -571,11 +633,11 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             await self.github.post_comment(
                 state["repo"],
                 state["issue_number"],
-                "Cannot create the draft PR: the latest run is not verified.",
+                "Cannot create the PR: the latest run is not verified.",
             )
             return {
                 "final_status": "failed",
-                "final_summary": "Draft PR creation refused: run is not verified.",
+                "final_summary": "PR creation refused: run is not verified.",
             }
 
         worktree = Path(run["worktree"])
@@ -585,7 +647,7 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             if not verification.passed:
                 await self.github.post_comment(
                     state["repo"], state["issue_number"],
-                    f"Draft PR creation refused because the code changed after verification: {verification.summary}",
+                    f"PR creation refused because the code changed after verification: {verification.summary}",
                 )
                 return {"final_status": "failed", "verification": verification.as_dict()}
             await self.store.update_run(
@@ -601,10 +663,13 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             run["branch"],
             self.settings.main_branch,
             f"{context.title} (#{state['issue_number']})",
-            f"Closes #{state['issue_number']}\n\nCreated by the coding agent after local verification.",
+            f"Closes #{state['issue_number']}\n\nCreated by the coding agent after automated verification.",
         )
         pr_url = str(pr.get("html_url") or "")
         pr_number = int(pr["number"])
+        await self._emit(
+            state, "pr_opened", f"Pushed `{run['branch']}` and opened PR #{pr_number}: {pr_url}"
+        )
         await self.store.update_run(
             state["run_id"],
             status="reviewing",
@@ -614,7 +679,7 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
         await self.github.post_comment(
             state["repo"],
             state["issue_number"],
-            f"Draft pull request ready for review: {pr_url}",
+            f"Pull request ready for review: {pr_url}",
         )
         return {
             "final_status": "reviewing",
@@ -642,6 +707,9 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             f"Address review on PR #{run['pr_number']}",
         )
         await self.store.update_run(state["run_id"], status="reviewing")
+        await self._emit(
+            state, "review_pushed", f"Review fixes pushed to PR #{run['pr_number']} ({sha[:12]})"
+        )
         await self.github.post_comment(
             state["repo"],
             int(run["pr_number"]),
