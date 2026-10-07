@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 
 type Priority = 'low' | 'medium' | 'high'
 
@@ -22,6 +22,36 @@ const PRIORITY_LABELS: Record<Priority, string> = {
   medium: 'בינונית',
   high: 'גבוהה',
 }
+
+const CONFETTI_COLORS = [
+  '#ef4444',
+  '#f97316',
+  '#eab308',
+  '#22c55e',
+  '#3b82f6',
+  '#a855f7',
+]
+
+type ConfettiPiece = {
+  left: number
+  color: string
+  delay: number
+  duration: number
+  width: number
+  height: number
+}
+
+const CONFETTI_PIECES: ConfettiPiece[] = Array.from(
+  { length: 28 },
+  () => ({
+    left: Math.random() * 100,
+    color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+    delay: Math.random() * 0.3,
+    duration: 1.5 + Math.random() * 0.6,
+    width: 7 + Math.random() * 6,
+    height: 5 + Math.random() * 4,
+  }),
+)
 
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp)
@@ -47,6 +77,36 @@ function App() {
   const [text, setText] = useState('')
   const [priority, setPriority] = useState<Priority>('medium')
   const [theme, setTheme] = useState<Theme>(getInitialTheme)
+  const [celebrating, setCelebrating] = useState(false)
+
+  // Tracks whether the previous render already had every task done, so the
+  // celebration fires only on the transition to "all done".
+  const wasAllDone = useRef(false)
+
+  // Marks that the latest todos change came from a completion toggle, so
+  // deleting the last open todo never triggers the celebration.
+  const toggled = useRef(false)
+
+  useEffect(() => {
+    const activeTodos = todos.filter((todo) => !todo.deletedAt)
+    const allDone =
+      activeTodos.length > 0 && activeTodos.every((todo) => todo.completed)
+
+    if (allDone && !wasAllDone.current && toggled.current) {
+      setCelebrating(true)
+    }
+
+    wasAllDone.current = allDone
+    toggled.current = false
+  }, [todos])
+
+  useEffect(() => {
+    if (!celebrating) return
+
+    const timer = setTimeout(() => setCelebrating(false), 2000)
+
+    return () => clearTimeout(timer)
+  }, [celebrating])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -78,6 +138,8 @@ function App() {
   }
 
   function toggleTodo(id: number) {
+    toggled.current = true
+
     setTodos((current) =>
       current.map((todo) =>
         todo.id === id && !todo.deletedAt
@@ -211,6 +273,30 @@ function App() {
           </ul>
         )}
       </section>
+
+      {celebrating && (
+        <div className="celebration">
+          <div aria-hidden="true">
+            {CONFETTI_PIECES.map((piece, index) => (
+              <span
+                key={index}
+                className="confetti-piece"
+                style={{
+                  left: `${piece.left}%`,
+                  width: piece.width,
+                  height: piece.height,
+                  backgroundColor: piece.color,
+                  animationDelay: `${piece.delay}s`,
+                  animationDuration: `${piece.duration}s`,
+                }}
+              />
+            ))}
+          </div>
+          <p className="celebration-message" role="status">
+            כל הכבוד! סיימת את כל המשימות 🎉
+          </p>
+        </div>
+      )}
     </main>
   )
 }
