@@ -4,11 +4,24 @@ type Todo = {
   id: number
   text: string
   completed: boolean
+  createdAt: number
+  deletedAt?: number
 }
 
 type Theme = 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'theme'
+
+function formatTimestamp(timestamp: number): string {
+  const date = new Date(timestamp)
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const year = date.getFullYear()
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+
+  return `${day}/${month}/${year} ${hours}:${minutes}`
+}
 
 function getInitialTheme(): Theme {
   try {
@@ -43,9 +56,11 @@ function App() {
 
     if (!value) return
 
+    const createdAt = Date.now()
+
     setTodos((current) => [
       ...current,
-      { id: Date.now(), text: value, completed: false },
+      { id: createdAt, text: value, completed: false, createdAt },
     ])
     setText('')
   }
@@ -53,13 +68,21 @@ function App() {
   function toggleTodo(id: number) {
     setTodos((current) =>
       current.map((todo) =>
-        todo.id === id ? { ...todo, completed: !todo.completed } : todo,
+        todo.id === id && !todo.deletedAt
+          ? { ...todo, completed: !todo.completed }
+          : todo,
       ),
     )
   }
 
   function deleteTodo(id: number) {
-    setTodos((current) => current.filter((todo) => todo.id !== id))
+    setTodos((current) =>
+      current.map((todo) =>
+        todo.id === id && !todo.deletedAt
+          ? { ...todo, deletedAt: Date.now() }
+          : todo,
+      ),
+    )
   }
 
   return (
@@ -98,28 +121,62 @@ function App() {
           <p className="empty">אין משימות עדיין</p>
         ) : (
           <ul>
-            {todos.map((todo) => (
-              <li key={todo.id}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={todo.completed}
-                    onChange={() => toggleTodo(todo.id)}
-                  />
-                  <span className={todo.completed ? 'completed' : ''}>
+            {todos.map((todo) => {
+              const deletedAt = todo.deletedAt
+
+              const content = (
+                <span className="todo-text">
+                  <span className="timestamps">
+                    נוצרה {formatTimestamp(todo.createdAt)}
+                    {deletedAt
+                      ? ` · נמחקה ${formatTimestamp(deletedAt)}`
+                      : ''}
+                    {' · '}
+                  </span>
+                  <span
+                    className={
+                      deletedAt
+                        ? 'deleted-text'
+                        : todo.completed
+                          ? 'completed'
+                          : ''
+                    }
+                  >
                     {todo.text}
                   </span>
-                </label>
-                <button
-                  className="delete"
-                  type="button"
-                  onClick={() => deleteTodo(todo.id)}
-                  aria-label={`מחיקת ${todo.text}`}
+                </span>
+              )
+
+              return (
+                <li
+                  key={todo.id}
+                  className={deletedAt ? 'deleted' : undefined}
                 >
-                  מחיקה
-                </button>
-              </li>
-            ))}
+                  {deletedAt ? (
+                    <div className="todo-item">{content}</div>
+                  ) : (
+                    <label className="todo-item">
+                      <input
+                        type="checkbox"
+                        checked={todo.completed}
+                        onChange={() => toggleTodo(todo.id)}
+                      />
+                      {content}
+                    </label>
+                  )}
+                  {!deletedAt && (
+                    <button
+                      className="delete"
+                      type="button"
+                      onClick={() => deleteTodo(todo.id)}
+                      aria-label={`מחיקת ${todo.text}`}
+                    >
+                      מחיקה
+                    </button>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>

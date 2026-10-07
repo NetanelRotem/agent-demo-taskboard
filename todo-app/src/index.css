@@ -138,7 +138,7 @@ li {
   border-bottom: 1px solid var(--color-card-border);
 }
 
-li label {
+li .todo-item {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -150,6 +150,19 @@ li span {
 }
 
 .completed {
+  color: var(--color-muted);
+  text-decoration: line-through;
+}
+
+.timestamps {
+  color: var(--color-muted);
+}
+
+.deleted .todo-item {
+  opacity: 0.6;
+}
+
+.deleted-text {
   color: var(--color-muted);
   text-decoration: line-through;
 }
