@@ -1,16 +1,27 @@
 import { FormEvent, useEffect, useState } from 'react'
 
+type Priority = 'low' | 'medium' | 'high'
+
 type Todo = {
   id: number
   text: string
   completed: boolean
   createdAt: number
   deletedAt?: number
+  priority: Priority
 }
 
 type Theme = 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'theme'
+
+const PRIORITY_LEVELS = ['low', 'medium', 'high'] as const
+
+const PRIORITY_LABELS: Record<Priority, string> = {
+  low: 'נמוכה',
+  medium: 'בינונית',
+  high: 'גבוהה',
+}
 
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp)
@@ -34,6 +45,7 @@ function getInitialTheme(): Theme {
 function App() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [text, setText] = useState('')
+  const [priority, setPriority] = useState<Priority>('medium')
   const [theme, setTheme] = useState<Theme>(getInitialTheme)
 
   useEffect(() => {
@@ -60,7 +72,7 @@ function App() {
 
     setTodos((current) => [
       ...current,
-      { id: createdAt, text: value, completed: false, createdAt },
+      { id: createdAt, text: value, completed: false, createdAt, priority },
     ])
     setText('')
   }
@@ -114,6 +126,20 @@ function App() {
             onChange={(event) => setText(event.target.value)}
             placeholder="מה צריך לעשות?"
           />
+          <label className="sr-only" htmlFor="new-todo-priority">
+            עדיפות
+          </label>
+          <select
+            id="new-todo-priority"
+            value={priority}
+            onChange={(event) => setPriority(event.target.value as Priority)}
+          >
+            {PRIORITY_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {PRIORITY_LABELS[level]}
+              </option>
+            ))}
+          </select>
           <button type="submit">הוספה</button>
         </form>
 
@@ -126,6 +152,11 @@ function App() {
 
               const content = (
                 <span className="todo-text">
+                  <span
+                    className={`priority-badge priority-${todo.priority}`}
+                  >
+                    {PRIORITY_LABELS[todo.priority]}
+                  </span>
                   <span className="timestamps">
                     נוצרה {formatTimestamp(todo.createdAt)}
                     {deletedAt
