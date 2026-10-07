@@ -14,6 +14,7 @@
   --color-focus: #93c5fd;
   --color-danger: #dc2626;
 
+  color-scheme: light;
   color: var(--color-text);
   background: var(--color-bg);
 }
@@ -30,6 +31,8 @@
   --color-accent-text: #fff;
   --color-focus: #60a5fa;
   --color-danger: #f87171;
+
+  color-scheme: dark;
 }
 
 * {
@@ -43,7 +46,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -99,7 +103,8 @@ form {
   gap: 8px;
 }
 
-form input {
+form input,
+form select {
   min-width: 0;
   flex: 1;
   padding: 11px 12px;
@@ -107,6 +112,10 @@ form input {
   border-radius: 8px;
   color: var(--color-text);
   background: var(--color-card);
+}
+
+form select {
+  flex: none;
 }
 
 form button {
@@ -118,6 +127,7 @@ form button {
 }
 
 input:focus-visible,
+select:focus-visible,
 button:focus-visible {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
@@ -152,6 +162,25 @@ li span {
 .completed {
   color: var(--color-muted);
   text-decoration: line-through;
+}
+
+.priority-badge {
+  display: inline-block;
+  flex: none;
+  margin-inline-end: 8px;
+  padding: 2px 10px;
+  border: 1px solid var(--color-input-border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.priority-high {
+  font-weight: 700;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
 }
 
 .timestamps {
