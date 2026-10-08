@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import html
 import json
 import logging
 import os
@@ -9,12 +12,14 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 
 load_dotenv()
 
 from agent_models import AgentCommand
 from commands import CommandError, parse_command
 from config import Settings
+import graph_view
 from service import AgentService, WorkItem
 
 logging.basicConfig(
@@ -23,6 +28,15 @@ logging.basicConfig(
 )
 
 COMMAND_PREFIX = "/agent"
+SIGNATURE_PREFIX = "sha256="
+
+
+def signature_is_valid(secret: str, body: bytes, header: str | None) -> bool:
+    """GitHub signs the raw body with HMAC-SHA256 in X-Hub-Signature-256."""
+    if not header or not header.startswith(SIGNATURE_PREFIX):
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(header[len(SIGNATURE_PREFIX):], expected)
 
 
 def is_bot(payload: dict) -> bool:
@@ -101,13 +115,56 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    @app.get("/graph", response_class=HTMLResponse)
+    async def graph(request: Request, run_id: str | None = None) -> str:
+        """The workflow diagram; with run_id, that run's visited and current nodes."""
+        service = request.app.state.agent_service
+        store = getattr(service, "store", None)
+        if not run_id:
+            runs = await store.recent_runs() if store else []
+            links = " · ".join(
+                f'<a href="?run_id={run["run_id"][:8]}">#{run["issue_number"]} '
+                f'{run["run_id"][:8]} ({html.escape(run["status"])})</a>'
+                for run in runs
+            )
+            return graph_view.page(
+                graph_view.mermaid(), "Coding agent graph",
+                f"Recent runs: {links}" if links else "No runs yet.",
+            )
+        run = await store.find_run(run_id) if store else None
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        compiled = service.agent_graph.graph
+        visited, current = await graph_view.run_progress(compiled, run["thread_id"])
+        details = (
+            f'{html.escape(run["repo"])} #{run["issue_number"]} · status '
+            f'<b>{html.escape(run["status"])}</b>'
+            + (f' · <a href="{html.escape(run["pr_url"])}">PR</a>' if run.get("pr_url") else "")
+            + ' · <span class="legend"><span style="background:#ffd43b">current / waiting</span>'
+            '<span style="background:#d3f9d8">done</span></span> · refreshes every 5s'
+            ' · <a href="/graph">all runs</a>'
+        )
+        return graph_view.page(
+            graph_view.mermaid(compiled, visited, current),
+            f"Run {run['run_id'][:8]}",
+            details,
+            refresh=True,
+        )
+
     @app.post("/webhooks/github", status_code=status.HTTP_202_ACCEPTED)
     async def github_webhook(
         request: Request,
         x_github_event: str | None = Header(default=None),
         x_github_delivery: str | None = Header(default=None),
+        x_hub_signature_256: str | None = Header(default=None),
     ) -> dict:
         body = await request.body()
+        # Fail closed: without a secret anyone could forge an authorized user's comment.
+        secret = os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
+        if not secret:
+            raise HTTPException(status_code=500, detail="GITHUB_WEBHOOK_SECRET is not configured")
+        if not signature_is_valid(secret, body, x_hub_signature_256):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
         try:
             payload = json.loads(body)

@@ -79,7 +79,7 @@ LANGFUSE_TRACING_ENABLED=true
 
 אם שני המפתחות אינם מוגדרים, Langfuse כבוי והשירות ממשיך לעבוד ללא שינוי. אפשר להשבית במפורש באמצעות `LANGFUSE_TRACING_ENABLED=false`. שים לב ש־Langfuse מקבל את מצב הגרף, לרבות תוכן ה־Issue, התוכנית והחלטות האדם; בחר סביבת אירוח ומדיניות retention שמתאימות לרגישות המידע שלך.
 
-חתימת ה־webhook אינה נבדקת כרגע, בהתאם להגדרת שלב הפיתוח הזה. לכן אין להסתמך על `AUTHORIZED_GITHUB_USERS` כמנגנון אבטחה כאשר ה־endpoint חשוף לאינטרנט: ללא אימות חתימה ניתן לזייף payload עם שם משתמש מורשה.
+כל webhook נבדק מול `GITHUB_WEBHOOK_SECRET`: השרת מחשב HMAC-SHA256 של גוף הבקשה ומשווה לכותרת `X-Hub-Signature-256`. חתימה חסרה או שגויה מחזירה `401`. אם הסוד לא מוגדר, השרת מסרב לכל webhook (`500`), כדי שאי אפשר יהיה לזייף payload עם שם של משתמש מורשה. ליצירת סוד: `python -c "import secrets; print(secrets.token_hex(32))"`.
 
 שאר ברירות המחדל מתועדות ב־`.env.example`. מצב LangGraph, בקשות, אירועי כלים, worktrees וסשני Pi נשמרים תחת `.agent-data` ואינם נשמרים ב־Git.
 
@@ -134,7 +134,7 @@ ngrok http 8000
 
 - Payload URL: `https://<tunnel-host>/webhooks/github`
 - Content type: `application/json`
-- Secret: אפשר להשאיר ריק; השרת אינו מאמת אותו כרגע
+- Secret: אותו ערך כמו `GITHUB_WEBHOOK_SECRET` ב־`.env` (חובה)
 - Events: **Issue comments**, ‏**Pull request reviews** ו־**Pull requests** (לניקוי אחרי מיזוג)
 
 ## אירועי מפתח ו־Telegram
@@ -191,11 +191,13 @@ python pi_logs.py --follow --run-id 12ab34cd
 ```text
 /agent start
 /agent start auto
-/agent answer <request-id> <text>
-/agent approve <request-id>
-/agent reject <request-id> <reason>
+/agent answer [request-id] <text>
+/agent approve [request-id]
+/agent reject [request-id] <reason>
 /agent stop
 ```
+
+מזהה הבקשה אופציונלי: בלעדיו הפקודה מופנית לבקשה הממתינה של ה־run הפעיל ב־Issue (לכל Issue יש לכל היותר בקשה ממתינה אחת).
 
 אין צורך ב־`/agent publish`: לאחר אימות מוצלח נפתח PR אוטומטית (לא כטיוטה). מספר ה־PR נשמר ב־SQLite ומשמש לקישור reviews עתידיים לאותו run. רק reviews ממשתמשים שמופיעים ב־`AUTHORIZED_GITHUB_USERS` נכנסים לתור העבודה. המיזוג נשאר ידני.
 

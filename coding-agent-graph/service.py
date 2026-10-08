@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -227,6 +227,8 @@ class AgentService:
             return "ignored" if item.command.name in {"review", "cleanup"} else "forbidden"
         if self.queue.full():
             return "busy"
+        if item.command.name in {"answer", "approve", "reject"} and not item.command.request_id:
+            item = await self._bind_pending_request(item)
         item_id = await self.store.persist_work_item(
             delivery_id, self._serialize_item(item)
         )
@@ -241,6 +243,15 @@ class AgentService:
         except asyncio.QueueFull:
             await self.store.mark_work_pending(item_id)
         return "accepted"
+
+    async def _bind_pending_request(self, item: WorkItem) -> WorkItem:
+        """Pin a command typed without an id to the request pending right now, so a
+        replay after a restart targets the same request rather than a newer one."""
+        run = await self.store.get_active_run(item.repo, item.issue_number)
+        request = run and await self.store.get_latest_human_request(run["run_id"], pending_only=True)
+        if not request:
+            return item
+        return replace(item, command=replace(item.command, request_id=request["request_id"]))
 
     async def _worker(self) -> None:
         while True:
@@ -415,8 +426,12 @@ class AgentService:
         await self._suspend_workspace(run_id)
 
     async def _resume(self, item: WorkItem) -> None:
-        request_id = item.command.request_id or ""
-        request = await self.store.get_request(request_id)
+        if item.command.request_id:
+            request_id = item.command.request_id
+            request = await self.store.get_request(request_id)
+        else:
+            request = await self._issue_request(item)
+            request_id = request["request_id"] if request else ""
         if (
             request
             and request.get("status") == "resolved"
@@ -424,9 +439,12 @@ class AgentService:
         ):
             return
         if not request or request.get("status") != "pending":
-            await self.github.post_comment(
-                item.repo, item.issue_number, f"Request `{request_id}` is missing, stale, or already resolved."
+            message = (
+                f"Request `{request_id}` is missing, stale, or already resolved."
+                if item.command.request_id
+                else "No pending request for this issue."
             )
+            await self.github.post_comment(item.repo, item.issue_number, message)
             return
         run = await self.store.get_run(request["run_id"])
         if not run or run["repo"] != item.repo or run["issue_number"] != item.issue_number:
@@ -453,6 +471,17 @@ class AgentService:
             self._config(run["thread_id"], run["run_id"], item, item.command.name),
         )
         await self._suspend_workspace(run["run_id"])
+
+    async def _issue_request(self, item: WorkItem) -> dict | None:
+        """The request a command without an id targets: the active run's pending one.
+        With nothing pending, the newest request lets a replay after a restart
+        reach _continue_interrupted_run, as it would with an explicit id."""
+        run = await self.store.get_active_run(item.repo, item.issue_number)
+        if not run:
+            return None
+        return await self.store.get_latest_human_request(
+            run["run_id"], pending_only=True
+        ) or await self.store.get_latest_human_request(run["run_id"])
 
     async def _continue_interrupted_run(self, request: dict, item: WorkItem) -> bool:
         """A restart can land between accepting a decision and finishing the work it

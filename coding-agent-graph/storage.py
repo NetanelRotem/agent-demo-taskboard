@@ -275,6 +275,21 @@ class AgentStore:
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def find_run(self, run_id_prefix: str) -> dict[str, Any] | None:
+        """Look a run up by the short id shown in comments and Telegram."""
+        cursor = await self._db().execute(
+            "SELECT * FROM runs WHERE run_id LIKE ? ORDER BY created_at DESC LIMIT 1",
+            (run_id_prefix.replace("%", "").replace("_", "") + "%",),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def recent_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        cursor = await self._db().execute(
+            "SELECT * FROM runs ORDER BY updated_at DESC LIMIT ?", (limit,)
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
     async def get_run_by_pr(self, repo: str, pr_number: int) -> dict[str, Any] | None:
         cursor = await self._db().execute(
             """SELECT * FROM runs
@@ -327,6 +342,20 @@ class AgentStore:
     async def get_request(self, request_id: str) -> dict[str, Any] | None:
         cursor = await self._db().execute(
             "SELECT * FROM requests WHERE request_id = ?", (request_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_latest_human_request(
+        self, run_id: str, pending_only: bool = False
+    ) -> dict[str, Any] | None:
+        """Newest request a human can answer (notices and finish reports never resolve)."""
+        status_filter = "AND status = 'pending'" if pending_only else ""
+        cursor = await self._db().execute(
+            f"""SELECT * FROM requests
+                WHERE run_id = ? AND kind IN ('clarification', 'approval') {status_filter}
+                ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+            (run_id,),
         )
         row = await cursor.fetchone()
         return dict(row) if row else None

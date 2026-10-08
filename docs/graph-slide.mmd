@@ -1,0 +1,29 @@
+flowchart TB
+    subgraph A["1 · Issue → Pull Request"]
+        direction LR
+        L[load_issue] --> P[plan_with_pi]
+        P --> H{{"human_input<br/>⏸ waits for you"}}
+        H -->|approve| I[implement_with_pi]
+        H -->|"reject / answer"| P
+        I -->|needs_input| H
+        I --> V{verify}
+        V -->|"fail → retry ≤3"| I
+        V -->|pass| PR[publish_pr]
+    end
+    subgraph B["2 · Review → new commit"]
+        direction LR
+        R[review] --> IR[implement_review]
+        IR --> V2{verify}
+        V2 -->|"fail → retry ≤3"| IR
+        V2 -->|pass| PU[push_review]
+    end
+    PR -.->|"PR review arrives"| R
+
+    classDef pi fill:#e7f5ff,stroke:#1c7ed6
+    classDef human fill:#fff3bf,stroke:#f08c00,stroke-width:2px
+    classDef check fill:#ebfbee,stroke:#2f9e44
+    classDef git fill:#f3f0ff,stroke:#7048e8
+    class P,I,IR pi
+    class H human
+    class V,V2 check
+    class PR,PU,R,L git

@@ -105,7 +105,7 @@ class CodingAgentGraph:
         )
         builder.add_conditional_edges(
             "implement_review",
-            self.after_review_implementation,
+            self.after_implement,
             {"verify": "verify", "human": "human_input", "finish": "finish"},
         )
         builder.add_conditional_edges(
@@ -285,13 +285,12 @@ The plan must be short and include acceptance criteria and concrete repository c
             questions = "\n".join(f"- {item}" for item in state.get("questions", []))
             content = (
                 f"### Agent needs input\n\n{questions}\n\n"
-                f"Reply with `/agent answer {request_id} <answer>`."
+                "Reply with `/agent answer <answer>`."
             )
         else:
             content = (
                 f"### Proposed plan (v{version})\n\n{_format_plan(state.get('plan', []))}\n\n"
-                f"Approve with `/agent approve {request_id}` or reject with "
-                f"`/agent reject {request_id} <reason>`."
+                "Approve with `/agent approve` or reject with `/agent reject <reason>`."
             )
 
         request = await self.store.ensure_request(
@@ -340,33 +339,31 @@ The plan must be short and include acceptance criteria and concrete repository c
             return "finish"
         return "plan"
 
-    async def implement_with_pi(self, state: AgentState) -> dict:
-        if state.get("human_decision", {}).get("action") == "stop":
-            return {"final_status": "stopped", "final_summary": "Stopped by an authorized user."}
-
-        attempt = state.get("attempt", 0) + 1
+    def _verification_feedback(self, state: AgentState) -> str:
         verification = state.get("verification", {})
         feedback = verification.get("summary", "")
         if verification.get("checks"):
             feedback += "\n" + "\n".join(
-                f"{item['command']}: {item['output'][-2000:]}" for item in verification["checks"] if not item["passed"]
+                f"{item['command']}: {item['output'][-2000:]}"
+                for item in verification["checks"]
+                if not item["passed"]
             )
-        prompt = f"""Continue this work session and implement the approved plan in {self.settings.todo_path}.
+        return feedback or "(none)"
 
-Approved plan v{state.get('plan_version')}:
-{_format_plan(state.get('plan', []))}
-
-Verification feedback from a previous attempt:
-{feedback or '(none)'}
-
-Read and edit the real files, then run the relevant checks. Stay strictly inside {self.settings.todo_path}; do not edit secrets, {Path(__file__).resolve().parent.name}, .github, or deployment files. Do not use GitHub credentials, push, open a PR, or merge.
-If a new product decision is genuinely required, stop and return needs_input.
-Finish by calling the submit_result tool with status completed, needs_input, or failed.
-"""
+    async def _implement(
+        self,
+        state: AgentState,
+        *,
+        phase: str,
+        prompt: str,
+        failure_summary: str,
+        verifying_status: str,
+    ) -> dict:
+        attempt = state.get("attempt", 0) + 1
         try:
             result = await self.pi.run(
                 run_id=state["run_id"],
-                phase="implement",
+                phase=phase,
                 session_id=state["pi_session_id"],
                 worktree=Path(state["worktree"]),
                 prompt=prompt,
@@ -395,13 +392,13 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
                 "pi_summary": result.summary,
             }
         if result.status != "completed":
-            summary = result.summary or "Pi reported implementation failure."
+            summary = result.summary or failure_summary
             return {
                 "attempt": attempt,
                 "verification": {"passed": False, "summary": f"Pi failed: {summary}"},
                 "pi_summary": summary,
             }
-        await self.store.update_run(state["run_id"], status="verifying")
+        await self.store.update_run(state["run_id"], status=verifying_status)
         return {
             "attempt": attempt,
             "pi_summary": result.summary,
@@ -409,13 +406,35 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             "questions": [],
         }
 
+    async def implement_with_pi(self, state: AgentState) -> dict:
+        if state.get("human_decision", {}).get("action") == "stop":
+            return {"final_status": "stopped", "final_summary": "Stopped by an authorized user."}
+
+        prompt = f"""Continue this work session and implement the approved plan in {self.settings.todo_path}.
+
+Approved plan v{state.get('plan_version')}:
+{_format_plan(state.get('plan', []))}
+
+Verification feedback from a previous attempt:
+{self._verification_feedback(state)}
+
+Read and edit the real files, then run the relevant checks. Stay strictly inside {self.settings.todo_path}; do not edit secrets, {Path(__file__).resolve().parent.name}, .github, or deployment files. Do not use GitHub credentials, push, open a PR, or merge.
+If a new product decision is genuinely required, stop and return needs_input.
+Finish by calling the submit_result tool with status completed, needs_input, or failed.
+"""
+        return await self._implement(
+            state,
+            phase="implement",
+            prompt=prompt,
+            failure_summary="Pi reported implementation failure.",
+            verifying_status="verifying",
+        )
+
     def after_implement(self, state: AgentState) -> Literal["verify", "human", "finish"]:
         if state.get("final_status"):
             return "finish"
         if state.get("pending_kind") == "clarification" and state.get("questions"):
             return "human"
-        if state.get("verification", {}).get("summary", "").startswith("Pi failed"):
-            return "verify"
         return "verify"
 
     async def review(self, state: AgentState) -> dict:
@@ -440,7 +459,6 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
         }
 
     async def implement_review(self, state: AgentState) -> dict:
-        attempt = state.get("attempt", 0) + 1
         feedback = state.get("review_feedback", {})
         inline = "\n\n".join(
             (
@@ -451,14 +469,6 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             )
             for item in feedback.get("comments", [])
         ) or "(no inline comments)"
-        verification = state.get("verification", {})
-        verification_feedback = verification.get("summary", "")
-        if verification.get("checks"):
-            verification_feedback += "\n" + "\n".join(
-                f"{item['command']}: {item['output'][-2000:]}"
-                for item in verification["checks"]
-                if not item["passed"]
-            )
         prompt = f"""Address the submitted review on PR #{state.get('pr_number')}.
 
 Review by {feedback.get('author', 'unknown')} ({feedback.get('state', 'commented')}):
@@ -468,69 +478,22 @@ Inline review comments:
 {inline}
 
 Verification feedback from a previous attempt:
-{verification_feedback or '(none)'}
+{self._verification_feedback(state)}
 
 Inspect the current worktree and implement only the requested review changes in {self.settings.todo_path}. Run relevant checks. Stay strictly inside {self.settings.todo_path}; do not edit secrets, {Path(__file__).resolve().parent.name}, .github, or deployment files. Do not use GitHub credentials, commit, push, open or merge a PR.
 If a product decision is genuinely required, return needs_input with a precise question.
 Finish by calling the submit_result tool with status completed, needs_input, or failed.
 """
-        try:
-            result = await self.pi.run(
-                run_id=state["run_id"],
-                phase="implement_review",
-                session_id=state["pi_session_id"],
-                worktree=Path(state["worktree"]),
-                prompt=prompt,
-                read_only=False,
-            )
-        except PiStopped:
-            return {
-                "attempt": attempt,
-                "final_status": "stopped",
-                "final_summary": "Stopped by an authorized user.",
-            }
-        except PiError as exc:
-            return {
-                "attempt": attempt,
-                "verification": {"passed": False, "summary": f"Pi failed: {exc}"},
-                "pi_summary": str(exc),
-            }
-
-        if result.status == "needs_input":
-            await self.store.update_run(state["run_id"], status="waiting_for_human")
-            await self._emit(state, "waiting_for_human", "Pi needs input:\n" + _bullets(result.questions))
-            return {
-                "attempt": attempt,
-                "pending_kind": "clarification",
-                "questions": result.questions,
-                "pi_summary": result.summary,
-            }
-        if result.status != "completed":
-            summary = result.summary or "Pi reported review implementation failure."
-            return {
-                "attempt": attempt,
-                "verification": {"passed": False, "summary": f"Pi failed: {summary}"},
-                "pi_summary": summary,
-            }
-        await self.store.update_run(state["run_id"], status="verifying_review")
-        return {
-            "attempt": attempt,
-            "pi_summary": result.summary,
-            "claimed_checks": result.claimed_checks,
-            "questions": [],
-        }
+        return await self._implement(
+            state,
+            phase="implement_review",
+            prompt=prompt,
+            failure_summary="Pi reported review implementation failure.",
+            verifying_status="verifying_review",
+        )
 
     def after_review_loaded(self, state: AgentState) -> Literal["implement", "finish"]:
         return "finish" if state.get("final_status") else "implement"
-
-    def after_review_implementation(
-        self, state: AgentState
-    ) -> Literal["verify", "human", "finish"]:
-        if state.get("final_status"):
-            return "finish"
-        if state.get("pending_kind") == "clarification" and state.get("questions"):
-            return "human"
-        return "verify"
 
     async def verify(self, state: AgentState) -> dict:
         try:

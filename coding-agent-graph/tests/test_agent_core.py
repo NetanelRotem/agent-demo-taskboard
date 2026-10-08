@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -54,9 +55,13 @@ def test_parse_result_accepts_json_after_explanatory_text():
     [
         ("/agent start", "start", None, ""),
         ("/agent start auto", "start", None, "auto"),
-        ("/agent approve r1", "approve", "r1", ""),
-        ("/agent answer r1 use blue", "answer", "r1", "use blue"),
-        ("/agent reject r1 too broad", "reject", "r1", "too broad"),
+        ("/agent approve a1b2c3d4-p1-a", "approve", "a1b2c3d4-p1-a", ""),
+        ("/agent approve", "approve", None, ""),
+        ("/agent answer a1b2c3d4-p2-q use blue", "answer", "a1b2c3d4-p2-q", "use blue"),
+        ("/agent answer use blue and keep the   spacing", "answer", None, "use blue and keep the   spacing"),
+        ("/agent reject a1b2c3d4-p1-a too broad", "reject", "a1b2c3d4-p1-a", "too broad"),
+        ("/agent reject too broad, split it up", "reject", None, "too broad, split it up"),
+        ("/agent answer r1 use blue", "answer", None, "r1 use blue"),
         ("/agent stop", "stop", None, ""),
     ],
 )
@@ -65,9 +70,20 @@ def test_command_parser(text, name, request_id, answer):
     assert (parsed.name, parsed.request_id, parsed.text) == (name, request_id, answer)
 
 
-def test_command_parser_rejects_invalid_command():
-    with pytest.raises(CommandError):
-        parse_command("/agent approve")
+@pytest.mark.parametrize(
+    "text,usage",
+    [
+        ("/agent approve looks good", "Usage: /agent approve [request-id]"),
+        ("/agent answer", "Usage: /agent answer [request-id] <answer>"),
+        ("/agent answer a1b2c3d4-p1-q", "Usage: /agent answer [request-id] <answer>"),
+        ("/agent reject", "Usage: /agent reject [request-id] <reason>"),
+        ("/agent reject a1b2c3d4-p1-a   ", "Usage: /agent reject [request-id] <reason>"),
+        ("/agent stop now", "Usage: /agent stop"),
+    ],
+)
+def test_command_parser_rejects_invalid_command(text, usage):
+    with pytest.raises(CommandError, match=re.escape(usage)):
+        parse_command(text)
 
 
 def test_start_rejects_unknown_option():
@@ -544,6 +560,134 @@ async def test_old_plan_approval_is_rejected(tmp_path):
     assert "old plan version" in github.comments[-1]
     await service.store.close()
     await github.close()
+
+
+class ResumeGraph:
+    def __init__(self, next_nodes=(), interrupts=()):
+        self.snapshot = SimpleNamespace(next=next_nodes, tasks=[SimpleNamespace(interrupts=interrupts)])
+        self.invoked = []
+
+    async def aget_state(self, config):
+        return self.snapshot
+
+    async def ainvoke(self, value, config):
+        self.invoked.append(value)
+
+
+async def service_with_run(tmp_path, github):
+    service = AgentService(settings(tmp_path), github=github)
+    await service.store.open()
+    await service.store.create_run(
+        {
+            "run_id": "run",
+            "thread_id": "thread",
+            "repo": "a/b",
+            "issue_number": 1,
+            "status": "waiting_for_human",
+            "plan_version": 2,
+        }
+    )
+    return service
+
+
+@pytest.mark.asyncio
+async def test_commands_without_id_resolve_the_pending_request(tmp_path):
+    github = FakeGitHub()
+    service = await service_with_run(tmp_path, github)
+    try:
+        graph = ResumeGraph()
+        service.agent_graph = SimpleNamespace(graph=graph)
+        await service.store.ensure_request("run-p1-a", "run", "approval", 1, "h1")
+        await service.store.resolve_request("run-p1-a", {"action": "reject", "text": "no"})
+        await service.store.ensure_request("run-p2-q", "run", "clarification", 2, "h2")
+        await service.store.ensure_request("run-p2-auto", "run", "notice", 2, "h3")
+
+        await service._resume(WorkItem(AgentCommand("answer", text="use blue"), "a/b", 1, 10, "alice"))
+
+        assert graph.invoked == [Command(resume={"action": "answer", "text": "use blue"})]
+        assert (await service.store.get_request("run-p2-q"))["status"] == "resolved"
+        assert github.comments == []
+    finally:
+        await service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_command_without_id_keeps_kind_validation(tmp_path):
+    github = FakeGitHub()
+    service = await service_with_run(tmp_path, github)
+    try:
+        graph = ResumeGraph()
+        service.agent_graph = SimpleNamespace(graph=graph)
+        await service.store.ensure_request("run-p2-q", "run", "clarification", 2, "h")
+
+        await service._resume(WorkItem(AgentCommand("approve"), "a/b", 1, 10, "alice"))
+
+        assert graph.invoked == []
+        assert "does not match the pending request" in github.comments[-1]
+        assert (await service.store.get_request("run-p2-q"))["status"] == "pending"
+    finally:
+        await service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_command_without_id_reports_no_pending_request(tmp_path):
+    github = FakeGitHub()
+    service = await service_with_run(tmp_path, github)
+    try:
+        graph = ResumeGraph()
+        service.agent_graph = SimpleNamespace(graph=graph)
+        await service._resume(WorkItem(AgentCommand("approve"), "a/b", 1, 10, "alice"))
+        await service._resume(WorkItem(AgentCommand("approve"), "a/b", 99, 11, "alice"))
+
+        await service.store.ensure_request("run-p2-a", "run", "approval", 2, "h")
+        await service.store.resolve_request("run-p2-a", {"action": "approve", "text": ""})
+        await service._resume(WorkItem(AgentCommand("reject", text="no"), "a/b", 1, 12, "alice"))
+
+        assert graph.invoked == []
+        assert github.comments == ["No pending request for this issue."] * 3
+    finally:
+        await service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_replayed_command_without_id_continues_interrupted_run(tmp_path):
+    github = FakeGitHub()
+    service = await service_with_run(tmp_path, github)
+    try:
+        await service.store.ensure_request("run-p2-a", "run", "approval", 2, "h")
+        await service.store.resolve_request("run-p2-a", {"action": "approve", "text": ""})
+        mid_step = ResumeGraph(("implement_with_pi",))
+        service.agent_graph = SimpleNamespace(graph=mid_step)
+
+        await service._resume(WorkItem(AgentCommand("approve"), "a/b", 1, 10, "alice"))
+
+        assert mid_step.invoked == [None]
+        assert github.comments == []
+    finally:
+        await service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_pins_command_without_id_to_the_pending_request(tmp_path):
+    github = FakeGitHub()
+    service = await service_with_run(tmp_path, github)
+    try:
+        await service.store.ensure_request("run-p2-a", "run", "approval", 2, "h")
+        assert await service.enqueue(
+            WorkItem(AgentCommand("approve"), "a/b", 1, 10, "alice"), "d-1"
+        ) == "accepted"
+        assert await service.enqueue(
+            WorkItem(AgentCommand("approve"), "a/b", 2, 11, "alice"), "d-2"
+        ) == "accepted"
+
+        _, pinned = service.queue.get_nowait()
+        _, unpinned = service.queue.get_nowait()
+        assert pinned.command.request_id == "run-p2-a"
+        assert unpinned.command.request_id is None
+        recovered = await service.store.recover_work_items(10)
+        assert recovered[0]["payload"]["command"]["request_id"] == "run-p2-a"
+    finally:
+        await service.store.close()
 
 
 def test_pi_result_contract_rejects_free_text_and_accepts_json():

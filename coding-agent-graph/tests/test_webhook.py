@@ -1,9 +1,18 @@
+import hashlib
+import hmac
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
 import main
+
+SECRET = "webhook-secret"
+
+
+def sign(body: bytes, secret: str = SECRET) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
 
 class FakeService:
     def __init__(self):
@@ -26,7 +35,8 @@ def service():
 
 
 @pytest.fixture
-def client(service):
+def client(service, monkeypatch):
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", SECRET)
     app = main.create_app()
     app.state.agent_service = service
     return TestClient(app)
@@ -63,8 +73,10 @@ def make_review_payload(state="changes_requested", user="alice") -> dict:
     }
 
 
-def post(client, payload, event="issue_comment", signature="anything", delivery="delivery-1"):
+def post(client, payload, event="issue_comment", signature=None, delivery="delivery-1"):
     body = json.dumps(payload).encode()
+    if signature is None:
+        signature = sign(body)
     return client.post(
         "/webhooks/github",
         content=body,
@@ -81,16 +93,28 @@ def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_webhook_enqueues_command_without_token_validation(client, service):
+def test_signed_webhook_enqueues_command(client, service):
     response = post(client, make_payload())
     assert response.status_code == 202
     assert response.json() == {"status": "accepted"}
     assert service.items[0].command.name == "start"
 
 
-def test_webhook_signature_value_is_not_validated(client):
-    assert post(client, make_payload(), signature="wrong", delivery="wrong").status_code == 202
-    assert post(client, make_payload(), signature="", delivery="missing").status_code == 202
+@pytest.mark.parametrize(
+    "signature",
+    ["", "sha256=wrong", "sha1=abc", sign(b"another body"), sign(b"x", "other-secret")],
+)
+def test_bad_signature_is_rejected(client, service, signature):
+    response = post(client, make_payload(), signature=signature)
+    assert response.status_code == 401
+    assert service.items == []
+
+
+def test_missing_secret_refuses_webhooks(client, service, monkeypatch):
+    monkeypatch.delenv("GITHUB_WEBHOOK_SECRET")
+    response = post(client, make_payload())
+    assert response.status_code == 500
+    assert service.items == []
 
 
 def test_unauthorized_user_is_rejected(client):
@@ -169,11 +193,7 @@ def test_closed_pull_request_enqueues_cleanup(client, service, merged, outcome):
         "repository": {"full_name": "acme/todo"},
         "sender": {"login": "alice", "type": "User"},
     }
-    response = client.post(
-        "/webhooks/github",
-        content=json.dumps(payload),
-        headers={"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": f"close-{outcome}"},
-    )
+    response = post(client, payload, event="pull_request", delivery=f"close-{outcome}")
     assert response.json() == {"status": "accepted"}
     item = service.items[-1]
     assert (item.command.name, item.command.text, item.pull_number) == ("cleanup", outcome, 7)
@@ -186,10 +206,6 @@ def test_other_pull_request_actions_are_ignored(client, service):
         "repository": {"full_name": "acme/todo"},
         "sender": {"login": "alice", "type": "User"},
     }
-    response = client.post(
-        "/webhooks/github",
-        content=json.dumps(payload),
-        headers={"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "open-1"},
-    )
+    response = post(client, payload, event="pull_request", delivery="open-1")
     assert response.json() == {"status": "ignored"}
     assert service.items == []
