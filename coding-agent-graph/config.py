@@ -31,6 +31,13 @@ def _github_token() -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _plan_approval(value: str) -> str:
+    value = value.strip().lower()
+    if value == "auto":
+        return "auto"
+    return "never" if value in {"0", "false", "no", "off", "never"} else "always"
+
+
 @dataclass(frozen=True)
 class Settings:
     github_token: str
@@ -45,7 +52,10 @@ class Settings:
     max_attempts: int
     queue_size: int
     langfuse_enabled: bool = False
-    require_plan_approval: bool = True
+    # always: every plan waits for /agent approve; never: plans run immediately;
+    # auto: only plans Pi rates simple (and short) run without approval.
+    plan_approval: str = "always"
+    auto_approve_max_steps: int = 4
     execution_mode: str = "local"
     sbx_command: str = "sbx"
     sandbox_kit: str = "docker.io/docker/sbx-kit-pi:latest"
@@ -63,6 +73,10 @@ class Settings:
     @property
     def telegram_enabled(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    @property
+    def require_plan_approval(self) -> bool:
+        return self.plan_approval != "never"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -93,8 +107,8 @@ class Settings:
             )
             and os.getenv("LANGFUSE_TRACING_ENABLED", "true").lower()
             not in {"0", "false", "no", "off"},
-            require_plan_approval=os.getenv("REQUIRE_PLAN_APPROVAL", "true").lower()
-            not in {"0", "false", "no", "off"},
+            plan_approval=_plan_approval(os.getenv("REQUIRE_PLAN_APPROVAL", "true")),
+            auto_approve_max_steps=int(os.getenv("AUTO_APPROVE_MAX_STEPS", "4")),
             execution_mode=execution_mode,
             sbx_command=os.getenv("SBX_COMMAND", "sbx"),
             sandbox_kit=os.getenv("SANDBOX_KIT", cls.sandbox_kit),

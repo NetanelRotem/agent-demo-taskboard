@@ -1,8 +1,8 @@
-# 3. ארכיטקטורה
+# 3. Architecture
 
-> **בקצרה:** שרת אחד מתזמר. ‏LangGraph מחליט מה עכשיו, ‏Pi כותב את הקוד בתוך sandbox, ו־SQLite זוכר הכול.
+> **In short:** one server orchestrates. LangGraph decides what happens next, Pi writes the code inside a sandbox, and SQLite remembers everything.
 
-## רכיבים
+## Components
 
 ```mermaid
 flowchart TB
@@ -18,7 +18,8 @@ flowchart TB
         PR_["pi_runner.py / cloud_sandbox.py<br/>run Pi, stream events"]
         WS["workspace.py<br/>verify, commit, push"]
         EV["events.py<br/>key events"]
-        DB[("SQLite<br/>checkpoints, runs, requests,<br/>work items, events")]
+        DB[("SQLite<br/>checkpoints, runs, requests,<br/>work items, events, comments")]
+        DASH["dashboard.py<br/>live UI + SSE"]
     end
 
     subgraph Cloud["Docker Cloud Sandbox (one per run)"]
@@ -45,39 +46,43 @@ flowchart TB
     EV --> DB
     EV -.-> TG[Telegram]
     G -.-> LF[Langfuse]
+    WH -- "comments" --> DB
+    DB -- "read-only" --> DASH
+    DASH -. "SSE" .-> BR[Browser]
 ```
 
-## מה כל חלק עושה
+## What each part does
 
-| קובץ | אחריות |
-|------|--------|
-| [main.py](../coding-agent-graph/main.py) | מקבל webhooks, מאמת את החתימה, מסנן אירועים לא רלוונטיים (בוטים, תגובות בלי `/agent`) ומפענח את הפקודה. |
-| [commands.py](../coding-agent-graph/commands.py) | מפענח `/agent ...` ל־`AgentCommand`. |
-| [service.py](../coding-agent-graph/service.py) | בודק הרשאה, שומר את פריט העבודה ב־SQLite ומחזיר `202`. worker אחד מעבד את התור ומפעיל את הגרף. |
-| [agent_graph.py](../coding-agent-graph/agent_graph.py) | הגרף: טעינת Issue, תכנון, המתנה לאדם, מימוש, בדיקות ו־PR. ראו [04](04-state-graph.md). |
-| [pi_runner.py](../coding-agent-graph/pi_runner.py) | מריץ את Pi, קורא את זרם האירועים שלו (JSONL), אוכף timeout ו־stop, ומחלץ את התוצאה המובנית. |
-| [cloud_sandbox.py](../coding-agent-graph/cloud_sandbox.py) | אותו ממשק, רק דרך `sbx --cloud`: יצירה, הפעלה, השהיה ומחיקה של sandbox, וניסיונות חוזרים על תקלות רשת. |
-| [workspace.py](../coding-agent-graph/workspace.py) | בודק את ה־diff ומריץ `npm run lint` ו־`npm run build`. אחר כך commit ו־push. |
-| [sandbox/agent.sh](../coding-agent-graph/sandbox/agent.sh) | הסקריפט שרץ בתוך ה־sandbox: `setup`, `check`, `commit-push`, `pi`, `stop-pi`. |
-| [pi_extensions/submit_result.ts](../coding-agent-graph/pi_extensions/submit_result.ts) | כלי שבו Pi מגיש את התוצאה בסכמה קבועה, במקום טקסט חופשי. |
-| [graph_view.py](../coding-agent-graph/graph_view.py) | מצייר את הגרף מתוך LangGraph, ומסמן עליו את ההתקדמות של run. מוגש ב־`/graph`. |
-| [events.py](../coding-agent-graph/events.py) | אירועי מפתח: נשמרים ב־SQLite, נכתבים ללוג ונשלחים ל־Telegram. |
-| [storage.py](../coding-agent-graph/storage.py) | כל הטבלאות: `runs`, `requests`, `work_items`, `deliveries`, `pi_events`, `events`, `telegram_topics`. |
+| File | Responsibility |
+|------|----------------|
+| [main.py](../coding-agent-graph/main.py) | Receives webhooks, verifies the signature (can be disabled for development with `WEBHOOK_VERIFY_SIGNATURE=false`), stores every comment and review in the `comments` table, filters out irrelevant events (bots, comments without `/agent`) and parses the command. |
+| [commands.py](../coding-agent-graph/commands.py) | Parses `/agent ...` into an `AgentCommand`. |
+| [service.py](../coding-agent-graph/service.py) | Checks authorization, stores the work item in SQLite and returns `202`. A single worker processes the queue and drives the graph. |
+| [agent_graph.py](../coding-agent-graph/agent_graph.py) | The graph: loading the Issue, planning, deciding whether approval is needed, waiting for a person, implementing, checks and the PR. See [04](04-state-graph.md). |
+| [pi_runner.py](../coding-agent-graph/pi_runner.py) | Runs Pi, reads its event stream (JSONL), enforces timeout and stop, and extracts the structured result. |
+| [cloud_sandbox.py](../coding-agent-graph/cloud_sandbox.py) | The same interface over `sbx --cloud`: creating, starting, pausing and deleting a sandbox, and retrying on network errors. |
+| [workspace.py](../coding-agent-graph/workspace.py) | Checks the diff and runs `npm run lint` and `npm run build`, then commits and pushes. |
+| [sandbox/agent.sh](../coding-agent-graph/sandbox/agent.sh) | The script that runs inside the sandbox: `setup`, `check`, `commit-push`, `pi`, `stop-pi`. |
+| [pi_extensions/submit_result.ts](../coding-agent-graph/pi_extensions/submit_result.ts) | The tool Pi uses to submit its result in a fixed schema instead of free text. While planning it also carries `complexity` and `complexity_reason`. |
+| [graph_view.py](../coding-agent-graph/graph_view.py) | Draws the graph from LangGraph and marks a run's progress on it. Served at `/graph`. |
+| [events.py](../coding-agent-graph/events.py) | Key events: stored in SQLite, written to the log and sent to Telegram. |
+| [dashboard.py](../coding-agent-graph/dashboard.py) + [dashboard.html](../coding-agent-graph/dashboard.html) | The dashboard at `/dashboard`: merges all tables into one timeline per run, computes stages and costs, and pushes changes to the browser over SSE. See [08](08-observability.md). |
+| [storage.py](../coding-agent-graph/storage.py) | All tables: `runs`, `requests`, `work_items`, `deliveries`, `pi_events`, `events`, `comments`, `telegram_topics`. |
 
-## שני מצבי ריצה
+## Two execution modes
 
 | | `EXECUTION_MODE=local` | `EXECUTION_MODE=cloud` |
 |---|---|---|
-| איפה Pi רץ | במחשב המקומי, ב־git worktree | ב־Docker Cloud Sandbox |
-| מאיפה הקוד | clone מקומי קיים | `gh repo clone` בתוך ה־sandbox |
-| מי עושה push | השרת, עם הטוקן שלו | ה־sandbox, דרך ה־proxy |
-| בידוד | משתני סביבה מסוננים | VM נפרד, רשת חסומה, סודות מחוץ ל־sandbox |
+| Where Pi runs | On the local machine, in a git worktree | In a Docker Cloud Sandbox |
+| Where the code comes from | An existing local clone | `gh repo clone` inside the sandbox |
+| Who pushes | The server, with its token | The sandbox, through the proxy |
+| Isolation | Filtered environment variables | Separate VM, blocked network, secrets outside the sandbox |
 
-שני המצבים עוברים דרך אותו ממשק (`WorkspaceManager` ו־`PiRunner`), ולכן הגרף לא יודע באיזה מצב הוא רץ.
+Both modes go through the same interface (`WorkspaceManager` and `PiRunner`), so the graph doesn't know which mode it runs in.
 
-## למה LangGraph
+## Why LangGraph
 
-ה־run נמשך שעות ואפילו ימים, כי הוא מחכה לאדם. ‏LangGraph נותן:
-- **‏`interrupt()`**: הגרף נעצר באמצע node, נשמר ל־SQLite, ומשתחרר. אין תהליך שמחכה.
-- **‏`Command(resume=...)`**: כשמגיעה תגובה, הגרף ממשיך בדיוק מאותה נקודה, גם אחרי restart של השרת.
-- **Thread לכל run**: ‏`thread_id` מחבר בין ה־checkpoints של אותו run.
+A run lasts hours or even days, because it waits for people. LangGraph provides:
+- **`interrupt()`**: the graph stops in the middle of a node, is saved to SQLite, and lets go. No process sits waiting.
+- **`Command(resume=...)`**: when a reply arrives, the graph continues from exactly the same point, even after a server restart.
+- **A thread per run**: the `thread_id` ties together the checkpoints of one run.

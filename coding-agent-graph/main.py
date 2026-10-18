@@ -20,6 +20,8 @@ from agent_models import AgentCommand
 from commands import CommandError, parse_command
 from config import Settings
 import graph_view
+from github_client import comment_record
+import dashboard
 from service import AgentService, WorkItem
 
 logging.basicConfig(
@@ -96,6 +98,25 @@ def extract_command(event: str | None, payload: dict) -> dict | None:
     return None
 
 
+def extract_comment(event: str | None, payload: dict) -> dict | None:
+    """Any comment-like event, recorded for the dashboard whether or not it is a command."""
+    repo = (payload.get("repository") or {}).get("full_name")
+    action = payload.get("action")
+    if event == "issue_comment" and action in {"created", "edited"}:
+        source, number, item = "issue", (payload.get("issue") or {}).get("number"), payload.get("comment")
+    elif event == "pull_request_review" and action in {"submitted", "edited"}:
+        source, number, item = "review", (payload.get("pull_request") or {}).get("number"), payload.get("review")
+    elif event == "pull_request_review_comment" and action in {"created", "edited"}:
+        source, number, item = (
+            "review_comment", (payload.get("pull_request") or {}).get("number"), payload.get("comment")
+        )
+    else:
+        return None
+    if not repo or number is None or not item or item.get("id") is None:
+        return None
+    return comment_record(source, repo, int(number), item)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
@@ -110,6 +131,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="coding-agent-graph", lifespan=lifespan)
+    app.include_router(dashboard.router(lambda: Settings.from_env().database_path))
 
     @app.get("/health")
     async def health() -> dict:
@@ -121,35 +143,11 @@ def create_app() -> FastAPI:
         service = request.app.state.agent_service
         store = getattr(service, "store", None)
         if not run_id:
-            runs = await store.recent_runs() if store else []
-            links = " · ".join(
-                f'<a href="?run_id={run["run_id"][:8]}">#{run["issue_number"]} '
-                f'{run["run_id"][:8]} ({html.escape(run["status"])})</a>'
-                for run in runs
-            )
-            return graph_view.page(
-                graph_view.mermaid(), "Coding agent graph",
-                f"Recent runs: {links}" if links else "No runs yet.",
-            )
+            return await graph_view.render(None, None, await store.recent_runs() if store else [])
         run = await store.find_run(run_id) if store else None
         if run is None:
             raise HTTPException(status_code=404, detail="Run not found")
-        compiled = service.agent_graph.graph
-        visited, current = await graph_view.run_progress(compiled, run["thread_id"])
-        details = (
-            f'{html.escape(run["repo"])} #{run["issue_number"]} · status '
-            f'<b>{html.escape(run["status"])}</b>'
-            + (f' · <a href="{html.escape(run["pr_url"])}">PR</a>' if run.get("pr_url") else "")
-            + ' · <span class="legend"><span style="background:#ffd43b">current / waiting</span>'
-            '<span style="background:#d3f9d8">done</span></span> · refreshes every 5s'
-            ' · <a href="/graph">all runs</a>'
-        )
-        return graph_view.page(
-            graph_view.mermaid(compiled, visited, current),
-            f"Run {run['run_id'][:8]}",
-            details,
-            refresh=True,
-        )
+        return await graph_view.render(service.agent_graph.graph, run, [])
 
     @app.post("/webhooks/github", status_code=status.HTTP_202_ACCEPTED)
     async def github_webhook(
@@ -159,17 +157,26 @@ def create_app() -> FastAPI:
         x_hub_signature_256: str | None = Header(default=None),
     ) -> dict:
         body = await request.body()
-        # Fail closed: without a secret anyone could forge an authorized user's comment.
-        secret = os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
-        if not secret:
-            raise HTTPException(status_code=500, detail="GITHUB_WEBHOOK_SECRET is not configured")
-        if not signature_is_valid(secret, body, x_hub_signature_256):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        if os.getenv("WEBHOOK_VERIFY_SIGNATURE", "true").strip().lower() not in {"0", "false", "no"}:
+            # Fail closed: without a secret anyone could forge an authorized user's comment.
+            secret = os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
+            if not secret:
+                raise HTTPException(status_code=500, detail="GITHUB_WEBHOOK_SECRET is not configured")
+            if not signature_is_valid(secret, body, x_hub_signature_256):
+                raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
         try:
             payload = json.loads(body)
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="Invalid JSON") from exc
+
+        comment = extract_comment(x_github_event, payload)
+        store = getattr(request.app.state.agent_service, "store", None)
+        if comment is not None and store is not None:
+            try:
+                await store.record_comment(comment)
+            except Exception:
+                logging.getLogger(__name__).warning("Could not record comment", exc_info=True)
 
         details = extract_command(x_github_event, payload)
         if details is None:

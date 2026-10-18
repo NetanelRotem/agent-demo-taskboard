@@ -37,6 +37,7 @@ def service():
 @pytest.fixture
 def client(service, monkeypatch):
     monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", SECRET)
+    monkeypatch.setenv("WEBHOOK_VERIFY_SIGNATURE", "true")
     app = main.create_app()
     app.state.agent_service = service
     return TestClient(app)
@@ -209,3 +210,15 @@ def test_other_pull_request_actions_are_ignored(client, service):
     response = post(client, payload, event="pull_request", delivery="open-1")
     assert response.json() == {"status": "ignored"}
     assert service.items == []
+
+
+def test_signature_check_can_be_disabled_for_development(client, service, monkeypatch):
+    monkeypatch.setenv("WEBHOOK_VERIFY_SIGNATURE", "false")
+    monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)
+    body = json.dumps(make_payload()).encode()
+    response = client.post(
+        "/webhooks/github", content=body,
+        headers={"X-GitHub-Event": "issue_comment", "X-GitHub-Delivery": "dev-1"},
+    )
+    assert response.status_code == 202
+    assert len(service.items) == 1

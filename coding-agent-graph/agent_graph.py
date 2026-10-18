@@ -130,6 +130,8 @@ class CodingAgentGraph:
             "issue_context": context.model_dump(),
             "requirements_version": context.requirements_version,
         }
+        if hasattr(self.store, "set_run_title"):
+            await self.store.set_run_title(state["run_id"], context.title)
         if state.get("command_name") == "review":
             run = await self.store.get_run(state["run_id"])
             if not run or not run.get("worktree") or not run.get("branch"):
@@ -205,6 +207,11 @@ Prior human decisions:
 
 Finish by calling the submit_result tool with status ready, needs_input, or failed.
 The plan must be short and include acceptance criteria and concrete repository checks. Ask only questions that materially change behavior; infer ordinary technical choices from the code. Use status needs_input only for such questions.
+
+Also rate the change with complexity and complexity_reason (one sentence):
+- simple: one small, well-defined change in one area, with an obvious approach; no new dependencies, no data or storage format changes, no removed behavior.
+- complex: several features or requirements, changes across several areas, new dependencies, data/storage changes, removed behavior, or product choices a person may want to weigh in on.
+When in doubt, choose complex: a person will then review the plan before any code is written.
 """
         try:
             result = await self.pi.run(
@@ -228,9 +235,10 @@ The plan must be short and include acceptance criteria and concrete repository c
 
         version = state.get("plan_version", 0) + 1
         pending_kind = "clarification" if result.status == "needs_input" or result.questions else "approval"
-        auto_approved = pending_kind == "approval" and state.get("auto_approve", False)
+        auto_approved, approval_reason = self._approval_decision(state, result)
+        auto_approved = pending_kind == "approval" and auto_approved
         if auto_approved:
-            await self._announce_auto_approved_plan(state, version, result.plan)
+            await self._announce_auto_approved_plan(state, version, result.plan, approval_reason)
         if pending_kind == "clarification":
             await self._emit(state, "waiting_for_human", "Pi needs input:\n" + _bullets(result.questions))
         else:
@@ -252,15 +260,32 @@ The plan must be short and include acceptance criteria and concrete repository c
             "pi_summary": result.summary,
             "pending_kind": pending_kind,
             "human_decision": {},
+            "auto_approve": auto_approved,
+            "approval_reason": approval_reason,
         }
 
+    def _approval_decision(self, state: AgentState, result: Any) -> tuple[bool, str]:
+        """Whether this plan may run without a human, and why (shown in the comment)."""
+        mode = state.get("approval_mode") or ("never" if state.get("auto_approve") else "always")
+        if mode == "never":
+            return True, "Plan approval is disabled for this run."
+        if mode != "auto":
+            return False, ""
+        reason = result.complexity_reason or "no reason given"
+        if result.complexity != "simple":
+            return False, f"Pi rated this change as complex: {reason}"
+        limit = self.settings.auto_approve_max_steps
+        if len(result.plan) > limit:
+            return False, f"The plan has {len(result.plan)} steps (more than {limit} need approval)."
+        return True, f"Pi rated this change as simple: {reason}"
+
     async def _announce_auto_approved_plan(
-        self, state: AgentState, version: int, plan: list[str]
+        self, state: AgentState, version: int, plan: list[str], reason: str = ""
     ) -> None:
         content = (
             f"### Plan (v{version}) — implementing without approval\n\n{_format_plan(plan)}\n\n"
-            "Plan approval is disabled for this run; a pull request will follow once checks pass. "
-            "Use `/agent stop` to cancel."
+            f"{reason or 'Plan approval is disabled for this run.'} "
+            "A pull request will follow once checks pass. Use `/agent stop` to cancel."
         )
         request_id = f"{state['run_id'][:8]}-p{version}-auto"
         request = await self.store.ensure_request(
@@ -288,9 +313,11 @@ The plan must be short and include acceptance criteria and concrete repository c
                 "Reply with `/agent answer <answer>`."
             )
         else:
+            reason = state.get("approval_reason")
+            why = f"Why approval is needed: {reason}\n\n" if reason else ""
             content = (
                 f"### Proposed plan (v{version})\n\n{_format_plan(state.get('plan', []))}\n\n"
-                "Approve with `/agent approve` or reject with `/agent reject <reason>`."
+                f"{why}Approve with `/agent approve` or reject with `/agent reject <reason>`."
             )
 
         request = await self.store.ensure_request(

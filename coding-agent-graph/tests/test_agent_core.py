@@ -998,3 +998,24 @@ async def test_auto_approved_plan_is_announced_once(tmp_path):
     assert "implementing without approval" in github.comments[0]
     assert (await store.get_run("run-1234"))["status"] == "implementing"
     await store.close()
+
+
+@pytest.mark.parametrize(
+    ("mode", "complexity", "steps", "expected"),
+    [
+        ("always", "simple", 1, False),
+        ("never", "complex", 9, True),
+        ("auto", "simple", 3, True),
+        ("auto", "complex", 1, False),
+        ("auto", None, 1, False),
+        ("auto", "simple", 5, False),
+    ],
+)
+def test_auto_mode_only_skips_approval_for_small_simple_plans(tmp_path, mode, complexity, steps, expected):
+    graph = CodingAgentGraph(settings(tmp_path), None, None, None, None, None)
+    result = PiResult(status="ready", plan=[f"step {i}" for i in range(steps)],
+                      complexity=complexity, complexity_reason="because")
+    approved, reason = graph._approval_decision({"approval_mode": mode}, result)
+    assert approved is expected
+    if mode == "auto":
+        assert reason

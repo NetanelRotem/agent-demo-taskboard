@@ -1,20 +1,21 @@
-# 1. סקירה
+# 1. Overview
 
-> **במשפט אחד:** כותבים Issue, מגיבים `/agent start`, ומקבלים Pull Request שעבר בדיקות.
+> **In one sentence:** write an Issue, comment `/agent start`, and get a Pull Request that passed the checks.
 
-## הרעיון
+## The idea
 
-רוב הכלים לכתיבת קוד עם AI עובדים בתוך העורך של מפתח אחד. הסוכן הזה עובד במקום שבו הצוות כבר מנהל את העבודה, כלומר ב־GitHub:
+Most AI coding tools work inside one developer's editor. This agent works where the team already manages its work, which is GitHub:
 
-- **המשימה** היא Issue.
-- **השיחה** עם הסוכן מתנהלת בתגובות על ה־Issue.
-- **התוצר** הוא Pull Request רגיל, שעובר review ומיזוג כמו כל קוד אחר.
+- **The task** is an Issue.
+- **The conversation** with the agent happens in comments on the Issue.
+- **The output** is a regular Pull Request that goes through review and merge like any other code.
 
 ```mermaid
 flowchart LR
     I["📝 Issue<br/>what to build"] --> P["📋 Plan<br/>agent proposes"]
-    P --> A{"👤 Human<br/>approves?"}
-    A -->|yes| C["⚙️ Code<br/>in a cloud sandbox"]
+    P -->|"simple plan"| C["⚙️ Code<br/>in a cloud sandbox"]
+    P -->|"complex or unclear"| A{"👤 Human<br/>approves?"}
+    A -->|yes| C
     A -->|"no + reason"| P
     C --> V["✅ Checks<br/>lint + build"]
     V -->|fail| C
@@ -24,27 +25,28 @@ flowchart LR
     R -->|merge| D["🚀 Deployed"]
 ```
 
-## שלושה עקרונות
+## Three principles
 
-1. **האדם מחליט, הסוכן מבצע.** יש שתי נקודות בקרה אנושיות: אישור התוכנית לפני שנכתבת שורת קוד, ו־review על ה־PR לפני המיזוג. המיזוג תמיד ידני.
-2. **הסוכן לא מקבל מפתחות.** הוא רץ ב־sandbox בענן בלי טוקן של GitHub ובלי מפתח API. הסודות מתווספים לבקשות ברמת הרשת, מחוץ להישג ידו.
-3. **בדיקות, לא הבטחות.** השרת לא סומך על מה שהסוכן אומר שבדק. הוא מריץ את הבדיקות בעצמו, ו־PR נפתח רק אם הן עוברות.
+1. **People decide, the agent executes.** There are two human checkpoints: approving the plan before any code is written, and reviewing the PR before it is merged. In `auto` mode the agent skips the approval only for simple changes, and stops when a change is complex or unclear. Merging is always manual.
+2. **The agent gets no keys.** It runs in a cloud sandbox with no GitHub token and no API key. Secrets are added to requests at the network level, out of its reach.
+3. **Checks, not promises.** The server doesn't trust what the agent says it checked. It runs the checks itself, and a PR is opened only if they pass.
 
-## מה יש בפרויקט
+## What's in the project
 
-| חלק | מה הוא |
-|-----|--------|
-| `todo-app/` | אפליקציית React שעליה הסוכן עובד בדמו. מתפרסמת ל־GitHub Pages בכל מיזוג ל־`main`. |
-| `coding-agent-graph/` | הסוכן: שרת FastAPI, גרף LangGraph, הרצת Pi וניהול sandboxes. |
-| `docs/` | התיעוד הזה. |
+| Part | What it is |
+|------|------------|
+| `todo-app/` | The React app the agent works on in the demo. Published to GitHub Pages on every merge to `main`. |
+| `coding-agent-graph/` | The agent: a FastAPI server, a LangGraph graph, running Pi and managing sandboxes. |
+| `docs/` | This documentation. |
 
-## הטכנולוגיות
+## Technologies
 
-| תפקיד | כלי |
-|-------|-----|
-| קליטת אירועים מ־GitHub | FastAPI + webhooks |
-| ניהול התהליך, העצירות וההמשך | LangGraph עם checkpoints ב־SQLite |
-| הסוכן שקורא וכותב קוד | Pi (coding agent) דרך OpenRouter |
-| סביבת ריצה מבודדת | Docker Cloud Sandboxes (`sbx --cloud`) |
-| התראות | Telegram, עם Topic לכל Issue |
+| Role | Tool |
+|------|------|
+| Receiving GitHub events | FastAPI + webhooks |
+| Running the workflow, its pauses and resumes | LangGraph with checkpoints in SQLite |
+| The agent that reads and writes code | Pi (coding agent) via OpenRouter |
+| Isolated runtime | Docker Cloud Sandboxes (`sbx --cloud`) |
+| Notifications | Telegram, with one Topic per Issue |
 | Tracing | Langfuse |
+| Live view of every run, its comments and costs | Dashboard at `/dashboard`, read from SQLite |

@@ -49,6 +49,14 @@ export default function (pi: ExtensionAPI) {
 			claimed_checks: Type.Array(Type.String(), {
 				description: "Checks you ran or that should be run",
 			}),
+			complexity: Type.Optional(
+				StringEnum(["simple", "complex"], {
+					description: "Planning only: simple if a person need not review the plan first",
+				}),
+			),
+			complexity_reason: Type.Optional(
+				Type.String({ description: "Planning only: one sentence explaining the complexity rating" }),
+			),
 		}),
 
 		async execute(_toolCallId, params) {

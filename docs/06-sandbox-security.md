@@ -1,8 +1,8 @@
-# 6. Sandbox ואבטחה
+# 6. Sandbox and security
 
-> **בקצרה:** הסוכן כותב ומריץ קוד, אבל בתוך VM בענן, בלי סודות, עם רשת חסומה, ובלי יכולת לדחוף או למזג בעצמו.
+> **In short:** the agent writes and runs code, but inside a cloud VM, without secrets, with a blocked network, and with no ability to push or merge on its own.
 
-## איפה הסודות נמצאים
+## Where the secrets live
 
 ```mermaid
 flowchart LR
@@ -20,26 +20,26 @@ flowchart LR
     PX -. "deny-all" .-> X["anything else ✗"]
 ```
 
-- הסודות נשמרים פעם אחת ב־secret store של Docker (`sbx --cloud secret set ...`).
-- בתוך ה־sandbox יש רק ערכי placeholder. גם אם Pi מדפיס את משתני הסביבה, הוא לא רואה מפתח אמיתי.
-- ה־proxy מחליף את ה־placeholder בערך האמיתי רק בבקשות ל־hosts המורשים.
+- Secrets are stored once in Docker's secret store (`sbx --cloud secret set ...`).
+- Inside the sandbox there are only placeholder values. Even if Pi prints its environment variables, it never sees a real key.
+- The proxy swaps the placeholder for the real value only on requests to allowed hosts.
 
-## שכבות ההגנה
+## Layers of protection
 
-| שכבה | מה היא מונעת |
-|------|---------------|
-| **VM נפרד לכל run** | ריצה אחת לא רואה קבצים של אחרת או של המחשב המקומי. |
-| **רשת `deny-all`** | Pi לא יכול לשלוח קוד או מידע לשרת זר. מותרים רק ה־hosts של ה־Kit ו־`SANDBOX_ALLOW_NETWORK`. |
-| **כלים לפי שלב** | בתכנון Pi מקבל רק `read, grep, find, ls`. עריכה ו־shell מגיעים רק אחרי אישור. |
-| **גבול תיקייה** | ‏`verify` דוחה כל שינוי מחוץ ל־`todo-app/`. ‏Pi לא יכול לשנות את ה־workflow, את הסוכן עצמו או את ה־CI. |
-| **השרת בודק, לא Pi** | ‏lint ו־build רצים מהשרת. מה ש־Pi "טוען שבדק" (`claimed_checks`) לא משפיע. |
-| **השרת מחליט מתי לדחוף** | ‏push רק אחרי בדיקות שעברו, ורק אם ה־revision זהה לזה שנבדק. |
-| **אין מיזוג** | הסוכן פותח PR ולא ממזג. מומלץ להגדיר branch protection על `main`. |
-| **חתימת webhook** | כל בקשה נבדקת ב־HMAC-SHA256 מול `GITHUB_WEBHOOK_SECRET`. בלי חתימה תקינה: `401`. בלי סוד מוגדר, השרת מסרב לכל webhook. |
-| **משתמשים מורשים** | פקודות ו־reviews רק מ־`AUTHORIZED_GITHUB_USERS`. תגובות של בוטים מסוננות. |
-| **צנזור** | טוקנים ומפתחות מוחלפים ב־`[REDACTED]` בלוגים, ב־SQLite וב־Telegram. |
+| Layer | What it prevents |
+|-------|------------------|
+| **A separate VM per run** | One run can't see another run's files or the local machine. |
+| **`deny-all` network** | Pi can't send code or data to an unknown server. Only the Kit's hosts and `SANDBOX_ALLOW_NETWORK` are allowed. |
+| **Tools per phase** | While planning, Pi gets only `read, grep, find, ls`. Editing and shell come only after approval, or in `auto` mode after a simple plan. |
+| **Folder boundary** | `verify` rejects any change outside `todo-app/`. Pi can't change the workflow, the agent itself or the CI. |
+| **The server checks, not Pi** | Lint and build run from the server. What Pi "claims it checked" (`claimed_checks`) has no effect. |
+| **The server decides when to push** | Push happens only after the checks pass, and only if the revision matches the one that was verified. |
+| **No merging** | The agent opens a PR and never merges. Branch protection on `main` is recommended. |
+| **Webhook signature** | Every request is checked with HMAC-SHA256 against `GITHUB_WEBHOOK_SECRET`. Without a valid signature: `401`. With no secret configured, the server refuses every webhook. For development the check can be turned off with `WEBHOOK_VERIFY_SIGNATURE=false`, and then anyone who knows the tunnel address can send commands. Set it back to `true` before real exposure. |
+| **Authorized users** | Commands and reviews only from `AUTHORIZED_GITHUB_USERS`. Bot comments are filtered out. |
+| **Redaction** | Tokens and keys are replaced with `[REDACTED]` in logs, SQLite and Telegram. |
 
-## מחזור החיים של sandbox
+## Sandbox lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -52,9 +52,9 @@ stateDiagram-v2
     deleted --> [*]
 ```
 
-sandbox עצור לא עולה כסף. הקבצים וה־session של Pi נשמרים, כך שאישור שמגיע אחרי יום ממשיך מאותה נקודה.
+A stopped sandbox costs nothing. Files and the Pi session are kept, so an approval that arrives a day later continues from the same point.
 
-## פערים ידועים (שלב הדמו)
+## Known gaps (demo stage)
 
-- **הטוקן של GitHub מאפשר push.** מומלץ fine-grained PAT ל־repository אחד בלבד, יחד עם branch protection.
-- **הסוכן קורא תוכן מה־Issue.** מי שיכול לכתוב Issue יכול לנסות prompt injection. הבידוד והבדיקות מגבילים את הנזק, וה־review האנושי הוא קו ההגנה האחרון.
+- **The GitHub token can push.** Use a fine-grained PAT for a single repository, together with branch protection.
+- **The agent reads Issue content.** Anyone who can write an Issue can attempt prompt injection. Isolation and the server-side checks limit the damage, and human review is the last line of defense.
