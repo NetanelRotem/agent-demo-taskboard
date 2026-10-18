@@ -15,6 +15,8 @@ type Theme = 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'theme'
 
+const TODOS_STORAGE_KEY = 'todos'
+
 const PRIORITY_LEVELS = ['low', 'medium', 'high'] as const
 
 const PRIORITY_LABELS: Record<Priority, string> = {
@@ -72,8 +74,40 @@ function getInitialTheme(): Theme {
   }
 }
 
+function isTodo(value: unknown): value is Todo {
+  if (typeof value !== 'object' || value === null) return false
+
+  const todo = value as Record<string, unknown>
+
+  return (
+    typeof todo.id === 'number' &&
+    typeof todo.text === 'string' &&
+    typeof todo.completed === 'boolean' &&
+    typeof todo.createdAt === 'number' &&
+    (todo.deletedAt === undefined || typeof todo.deletedAt === 'number') &&
+    PRIORITY_LEVELS.includes(todo.priority as Priority)
+  )
+}
+
+function getInitialTodos(): Todo[] {
+  try {
+    const stored = localStorage.getItem(TODOS_STORAGE_KEY)
+
+    if (!stored) return []
+
+    const parsed: unknown = JSON.parse(stored)
+
+    if (!Array.isArray(parsed)) return []
+
+    return parsed.filter(isTodo)
+  } catch {
+    // Storage unavailable or corrupted; start with an empty list.
+    return []
+  }
+}
+
 function App() {
-  const [todos, setTodos] = useState<Todo[]>([])
+  const [todos, setTodos] = useState<Todo[]>(getInitialTodos)
   const [text, setText] = useState('')
   const [priority, setPriority] = useState<Priority>('medium')
   const [theme, setTheme] = useState<Theme>(getInitialTheme)
@@ -117,6 +151,14 @@ function App() {
       // Storage unavailable; theme still applies for this session.
     }
   }, [theme])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TODOS_STORAGE_KEY, JSON.stringify(todos))
+    } catch {
+      // Storage unavailable; todos still apply for this session.
+    }
+  }, [todos])
 
   function toggleTheme() {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'))
