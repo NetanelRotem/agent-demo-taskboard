@@ -47,6 +47,30 @@ async def run_progress(graph: Any, thread_id: str) -> tuple[set[str], set[str]]:
     return visited, current
 
 
+async def render(compiled: Any, run: dict | None, recent_runs: list[dict]) -> str:
+    """The /graph page: the bare workflow with links to recent runs, or one run's progress."""
+    if run is None:
+        links = " · ".join(
+            f'<a href="?run_id={r["run_id"][:8]}">#{r["issue_number"]} '
+            f'{r["run_id"][:8]} ({html.escape(r["status"])})</a>'
+            for r in recent_runs
+        )
+        return page(
+            mermaid(), "Coding agent graph",
+            f"Recent runs: {links}" if links else "No runs yet.",
+        )
+    visited, current = await run_progress(compiled, run["thread_id"])
+    details = (
+        f'{html.escape(run["repo"])} #{run["issue_number"]} · status '
+        f'<b>{html.escape(run["status"])}</b>'
+        + (f' · <a href="{html.escape(run["pr_url"])}">PR</a>' if run.get("pr_url") else "")
+        + ' · <span class="legend"><span style="background:#ffd43b">current / waiting</span>'
+        '<span style="background:#d3f9d8">done</span></span> · refreshes every 5s'
+        ' · <a href="/graph">all runs</a> · <a href="/dashboard">dashboard</a>'
+    )
+    return page(mermaid(compiled, visited, current), f"Run {run['run_id'][:8]}", details, refresh=True)
+
+
 def page(diagram: str, title: str, details: str = "", refresh: bool = False) -> str:
     meta = '<meta http-equiv="refresh" content="5">' if refresh else ""
     return f"""<!doctype html>

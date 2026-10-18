@@ -2,6 +2,42 @@
 
 סוכן קוד מקומי שמקבל פקודות מתגובות ב־GitHub Issues. FastAPI קולט webhooks, ‏LangGraph מנהל את התהליך והעצירות, Pi חוקר ועורך קוד ב־worktree ייעודי, ו־SQLite שומר checkpoints ומטא־דאטה.
 
+## שימוש יומיומי (התחלה מהירה)
+
+אחרי ההתקנה וההגדרה החד־פעמית (בהמשך), כך עובדים עם הסוכן.
+
+**1. מפעילים את השרת** (טרמינל ראשון):
+
+```powershell
+cd coding-agent-graph
+.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+השרת מוכן כשמופיע `Uvicorn running on http://0.0.0.0:8000`. בלי `--reload`. אחרי שינוי קוד עוצרים (`Ctrl+C`) ומפעילים מחדש.
+
+**2. חושפים אותו ל־GitHub** (טרמינל שני), עם אחד מאלה:
+
+```powershell
+& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --url http://localhost:8000
+ngrok http 8000
+```
+
+הכתובת שמודפסת, עם `/webhooks/github` בסוף, היא ה־Payload URL של ה־webhook ב־GitHub (ראו [חיבור GitHub](#חיבור-github)). ב־cloudflared וב־ngrok החינמי הכתובת משתנה בכל הפעלה, וצריך לעדכן אותה ב־GitHub.
+
+**3. נותנים משימה:** פותחים Issue ב־repository ומגיבים עליו `/agent start`. הסוכן מגיב ב־👍 ומתחיל.
+
+**4. עוקבים:** פותחים את http://localhost:8000/dashboard. רואים שם את הפלאו, ההערות והעלויות בזמן אמת.
+
+**5. מגיבים כשצריך:**
+
+| הסוכן כתב | עונים |
+|---|---|
+| "Proposed plan … Why approval is needed" | `/agent approve`, או `/agent reject <reason>` |
+| "Agent needs input" | `/agent answer <text>` |
+| "Pull request ready for review" | review על ה־PR. ‏Request changes או Comment פותחים סבב תיקון נוסף |
+
+**6. ממזגים את ה־PR ידנית.** הסוכן מוחק את ה־sandbox, וה־run נסגר. ‏`/agent stop` עוצר run בכל שלב.
+
 ## תהליך העבודה
 
 ```mermaid
@@ -29,7 +65,17 @@ Pi מתכנן עם כלי קריאה וחיפוש בלבד. לאחר אישור 
 
 ### אישור תוכנית
 
-כברירת מחדל התוכנית ממתינה ל־`/agent approve`. ‏`/agent start auto` מדלג על האישור עבור ריצה אחת, ו־`REQUIRE_PLAN_APPROVAL=false` מדלג עליו כברירת מחדל. במצב זה התוכנית מתפרסמת כתגובה אינפורמטיבית והמימוש מתחיל מיד; שאלות הבהרה (`needs_input`) עדיין עוצרות לתשובה אנושית, וה־PR נשאר נקודת הבקרה.
+`REQUIRE_PLAN_APPROVAL` קובע מתי התוכנית ממתינה ל־`/agent approve`:
+
+| ערך | מתי הסוכן מחכה לאישור |
+|---|---|
+| `true` (ברירת מחדל) | תמיד |
+| `auto` | רק כשהשינוי מורכב. Pi מדרג כל תוכנית כ־`simple` או `complex` ומסביר למה. תוכנית `simple` עם עד `AUTO_APPROVE_MAX_STEPS` צעדים (ברירת מחדל 4) רצה מיד. כל השאר ממתין לאישור |
+| `false` | אף פעם |
+
+`complex` פירושו כמה פיצ'רים או דרישות, שינוי בכמה אזורים בקוד, תלות חדשה, שינוי בפורמט הנתונים או בשמירה, הסרה של התנהגות קיימת, או החלטת מוצר שאדם ירצה להכריע בה. כשיש ספק, Pi מדרג `complex`. מגבלת הצעדים נבדקת בקוד, כך שתוכנית ארוכה עוצרת גם אם Pi דירג אותה `simple`.
+
+כשהתוכנית רצה בלי אישור, היא מתפרסמת כתגובה אינפורמטיבית עם הסיבה, וה־PR נשאר נקודת הבקרה. כשהיא ממתינה, התגובה מסבירה למה נדרש אישור. בכל המצבים, אם משהו לא ברור, Pi שואל שאלה (`needs_input`) וה־run ממתין לתשובה. ‏`/agent start auto` מדלג על האישור עבור ריצה אחת.
 
 ### תוצאה מובנית מ־Pi
 
@@ -80,6 +126,8 @@ LANGFUSE_TRACING_ENABLED=true
 אם שני המפתחות אינם מוגדרים, Langfuse כבוי והשירות ממשיך לעבוד ללא שינוי. אפשר להשבית במפורש באמצעות `LANGFUSE_TRACING_ENABLED=false`. שים לב ש־Langfuse מקבל את מצב הגרף, לרבות תוכן ה־Issue, התוכנית והחלטות האדם; בחר סביבת אירוח ומדיניות retention שמתאימות לרגישות המידע שלך.
 
 כל webhook נבדק מול `GITHUB_WEBHOOK_SECRET`: השרת מחשב HMAC-SHA256 של גוף הבקשה ומשווה לכותרת `X-Hub-Signature-256`. חתימה חסרה או שגויה מחזירה `401`. אם הסוד לא מוגדר, השרת מסרב לכל webhook (`500`), כדי שאי אפשר יהיה לזייף payload עם שם של משתמש מורשה. ליצירת סוד: `python -c "import secrets; print(secrets.token_hex(32))"`.
+
+בשלב הפיתוח אפשר לכבות את הבדיקה עם `WEBHOOK_VERIFY_SIGNATURE=false`: השרת מקבל כל webhook בלי לבדוק חתימה וגם בלי סוד. ה־tunnel ציבורי, ולכן במצב הזה כל מי שמכיר את הכתובת יכול לשלוח פקודה בשם משתמש מורשה. לפני חשיפה אמיתית מחזירים ל־`true` (ברירת המחדל).
 
 שאר ברירות המחדל מתועדות ב־`.env.example`. מצב LangGraph, בקשות, אירועי כלים, worktrees וסשני Pi נשמרים תחת `.agent-data` ואינם נשמרים ב־Git.
 
@@ -134,8 +182,21 @@ ngrok http 8000
 
 - Payload URL: `https://<tunnel-host>/webhooks/github`
 - Content type: `application/json`
-- Secret: אותו ערך כמו `GITHUB_WEBHOOK_SECRET` ב־`.env` (חובה)
-- Events: **Issue comments**, ‏**Pull request reviews** ו־**Pull requests** (לניקוי אחרי מיזוג)
+- Secret: אותו ערך כמו `GITHUB_WEBHOOK_SECRET` ב־`.env` (חובה, אלא אם `WEBHOOK_VERIFY_SIGNATURE=false`)
+- Events: **Issue comments**, ‏**Pull request reviews**, ‏**Pull request review comments** (להערות inline בדשבורד) ו־**Pull requests** (לניקוי אחרי מיזוג)
+
+## דשבורד חי
+
+השרת מגיש דשבורד בכתובת `/dashboard`. הוא מציג כל issue ו־PR, את הפלאו (Triggered → Plan → Approval → Implement → Verify → PR → Review → Done) עם משך ועלות לכל שלב, פירוט עלויות לפי phase, וציר זמן של כל ההערות, הפקודות, האישורים וסשנים של Pi, עם כל קריאת כלי. העדכונים מגיעים בזמן אמת ב־Server-Sent Events (`/api/stream`).
+
+כל הנתונים נקראים מ־SQLite. הערות GitHub נשמרות בטבלת `comments`: הערות שהסוכן כותב נשמרות כשהוא שולח אותן, ושאר ההערות (כולל reviews והערות inline) מגיעות מה־webhook. בעליית השרת הוא גם מושך מ־GitHub את ההערות והכותרות של ה־runs האחרונים, כדי שגם ההיסטוריה תופיע.
+
+לצפייה בלי להריץ את הסוכן (קריאה בלבד מה־DB):
+
+```bash
+python dashboard.py --backfill    # מושך הערות וכותרות מ־GitHub ואז מגיש ב־http://127.0.0.1:8090/dashboard
+python dashboard.py               # בלי למשוך מ־GitHub
+```
 
 ## אירועי מפתח ו־Telegram
 

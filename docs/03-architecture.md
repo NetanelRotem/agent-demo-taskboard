@@ -18,7 +18,8 @@ flowchart TB
         PR_["pi_runner.py / cloud_sandbox.py<br/>run Pi, stream events"]
         WS["workspace.py<br/>verify, commit, push"]
         EV["events.py<br/>key events"]
-        DB[("SQLite<br/>checkpoints, runs, requests,<br/>work items, events")]
+        DB[("SQLite<br/>checkpoints, runs, requests,<br/>work items, events, comments")]
+        DASH["dashboard.py<br/>live UI + SSE"]
     end
 
     subgraph Cloud["Docker Cloud Sandbox (one per run)"]
@@ -45,24 +46,28 @@ flowchart TB
     EV --> DB
     EV -.-> TG[Telegram]
     G -.-> LF[Langfuse]
+    WH -- "comments" --> DB
+    DB -- "read-only" --> DASH
+    DASH -. "SSE" .-> BR[Browser]
 ```
 
 ## מה כל חלק עושה
 
 | קובץ | אחריות |
 |------|--------|
-| [main.py](../coding-agent-graph/main.py) | מקבל webhooks, מאמת את החתימה, מסנן אירועים לא רלוונטיים (בוטים, תגובות בלי `/agent`) ומפענח את הפקודה. |
+| [main.py](../coding-agent-graph/main.py) | מקבל webhooks, מאמת את החתימה (אפשר לכבות בפיתוח עם `WEBHOOK_VERIFY_SIGNATURE=false`), שומר כל תגובה ו־review בטבלת `comments`, מסנן אירועים לא רלוונטיים (בוטים, תגובות בלי `/agent`) ומפענח את הפקודה. |
 | [commands.py](../coding-agent-graph/commands.py) | מפענח `/agent ...` ל־`AgentCommand`. |
 | [service.py](../coding-agent-graph/service.py) | בודק הרשאה, שומר את פריט העבודה ב־SQLite ומחזיר `202`. worker אחד מעבד את התור ומפעיל את הגרף. |
-| [agent_graph.py](../coding-agent-graph/agent_graph.py) | הגרף: טעינת Issue, תכנון, המתנה לאדם, מימוש, בדיקות ו־PR. ראו [04](04-state-graph.md). |
+| [agent_graph.py](../coding-agent-graph/agent_graph.py) | הגרף: טעינת Issue, תכנון, החלטה אם צריך אישור, המתנה לאדם, מימוש, בדיקות ו־PR. ראו [04](04-state-graph.md). |
 | [pi_runner.py](../coding-agent-graph/pi_runner.py) | מריץ את Pi, קורא את זרם האירועים שלו (JSONL), אוכף timeout ו־stop, ומחלץ את התוצאה המובנית. |
 | [cloud_sandbox.py](../coding-agent-graph/cloud_sandbox.py) | אותו ממשק, רק דרך `sbx --cloud`: יצירה, הפעלה, השהיה ומחיקה של sandbox, וניסיונות חוזרים על תקלות רשת. |
 | [workspace.py](../coding-agent-graph/workspace.py) | בודק את ה־diff ומריץ `npm run lint` ו־`npm run build`. אחר כך commit ו־push. |
 | [sandbox/agent.sh](../coding-agent-graph/sandbox/agent.sh) | הסקריפט שרץ בתוך ה־sandbox: `setup`, `check`, `commit-push`, `pi`, `stop-pi`. |
-| [pi_extensions/submit_result.ts](../coding-agent-graph/pi_extensions/submit_result.ts) | כלי שבו Pi מגיש את התוצאה בסכמה קבועה, במקום טקסט חופשי. |
+| [pi_extensions/submit_result.ts](../coding-agent-graph/pi_extensions/submit_result.ts) | כלי שבו Pi מגיש את התוצאה בסכמה קבועה, במקום טקסט חופשי. בתכנון הוא כולל גם `complexity` ו־`complexity_reason`. |
 | [graph_view.py](../coding-agent-graph/graph_view.py) | מצייר את הגרף מתוך LangGraph, ומסמן עליו את ההתקדמות של run. מוגש ב־`/graph`. |
 | [events.py](../coding-agent-graph/events.py) | אירועי מפתח: נשמרים ב־SQLite, נכתבים ללוג ונשלחים ל־Telegram. |
-| [storage.py](../coding-agent-graph/storage.py) | כל הטבלאות: `runs`, `requests`, `work_items`, `deliveries`, `pi_events`, `events`, `telegram_topics`. |
+| [dashboard.py](../coding-agent-graph/dashboard.py) + [dashboard.html](../coding-agent-graph/dashboard.html) | הדשבורד ב־`/dashboard`: מאחד את כל הטבלאות לציר זמן לכל run, מחשב שלבים ועלויות, ודוחף שינויים לדפדפן ב־SSE. ראו [08](08-observability.md). |
+| [storage.py](../coding-agent-graph/storage.py) | כל הטבלאות: `runs`, `requests`, `work_items`, `deliveries`, `pi_events`, `events`, `comments`, `telegram_topics`. |
 
 ## שני מצבי ריצה
 

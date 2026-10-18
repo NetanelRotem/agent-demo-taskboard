@@ -46,6 +46,9 @@ class PiResult(BaseModel):
     plan: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)
     claimed_checks: list[str] = Field(default_factory=list)
+    # Planning only: Pi's own judgement of whether a human should review the plan.
+    complexity: Literal["simple", "complex"] | None = None
+    complexity_reason: str = ""
 
 
 class IssueContext(BaseModel):
@@ -128,3 +131,5 @@ class AgentState(TypedDict, total=False):
     review_base_revision: str
     workflow_phase: str
     auto_approve: bool
+    approval_mode: str
+    approval_reason: str

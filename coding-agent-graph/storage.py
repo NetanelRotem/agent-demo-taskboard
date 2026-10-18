@@ -94,9 +94,26 @@ class AgentStore:
                 thread_id INTEGER NOT NULL,
                 PRIMARY KEY (repo, issue_number)
             );
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                comment_id INTEGER NOT NULL,
+                repo TEXT NOT NULL,
+                number INTEGER NOT NULL,
+                author TEXT,
+                from_agent INTEGER NOT NULL DEFAULT 0,
+                body TEXT NOT NULL,
+                url TEXT,
+                path TEXT,
+                state TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(source, comment_id)
+            );
+            CREATE INDEX IF NOT EXISTS comments_thread ON comments(repo, number, created_at);
             """
         )
         await self._ensure_column("runs", "pr_number", "INTEGER")
+        await self._ensure_column("runs", "title", "TEXT")
         await self.conn.commit()
 
     async def _ensure_column(self, table: str, column: str, sql_type: str) -> None:
@@ -270,6 +287,11 @@ class AgentStore:
         )
         await self._db().commit()
 
+    async def set_run_title(self, run_id: str, title: str) -> None:
+        """Display-only metadata: leaves updated_at alone so run ordering is unchanged."""
+        await self._db().execute("UPDATE runs SET title = ? WHERE run_id = ?", (title, run_id))
+        await self._db().commit()
+
     async def get_run(self, run_id: str) -> dict[str, Any] | None:
         cursor = await self._db().execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
         row = await cursor.fetchone()
@@ -439,5 +461,24 @@ class AgentStore:
             """INSERT INTO pi_events(run_id, phase, event_type, payload_json, created_at)
                VALUES (?, ?, ?, ?, ?)""",
             (run_id, phase, event_type, compact, _now()),
+        )
+        await self._db().commit()
+
+    async def record_comment(self, comment: dict[str, Any]) -> None:
+        """Upsert one GitHub comment (issue comment, review, or inline review comment)."""
+        await self._db().execute(
+            """INSERT INTO comments(
+                source, comment_id, repo, number, author, from_agent, body, url, path,
+                state, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source, comment_id) DO UPDATE SET
+                body = excluded.body, state = COALESCE(excluded.state, comments.state)""",
+            (
+                comment["source"], int(comment["comment_id"]), comment["repo"],
+                int(comment["number"]), comment.get("author"),
+                1 if comment.get("from_agent") else 0, comment.get("body") or "",
+                comment.get("url"), comment.get("path"), comment.get("state"),
+                comment.get("created_at") or _now(),
+            ),
         )
         await self._db().commit()

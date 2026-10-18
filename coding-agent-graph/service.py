@@ -29,6 +29,30 @@ pi_logger = logging.getLogger("pi")
 SENSITIVE_KEY_PARTS = ("token", "secret", "api_key", "authorization", "password")
 
 
+async def backfill_comments(store: AgentStore, github: Any, limit: int = 50) -> int:
+    threads: dict[tuple[str, int], bool] = {}
+    titled: set[tuple[str, int]] = set()
+    for run in await store.recent_runs(limit):
+        threads.setdefault((run["repo"], int(run["issue_number"])), False)
+        if run.get("pr_number"):
+            threads[(run["repo"], int(run["pr_number"]))] = True
+        if not run.get("title"):
+            key = (run["repo"], int(run["issue_number"]))
+            if key not in titled:
+                titled.add(key)
+                title = await github.issue_title(*key)
+                for other in await store.recent_runs(limit):
+                    if (other["repo"], int(other["issue_number"])) == key and not other.get("title"):
+                        await store.set_run_title(other["run_id"], title)
+    count = 0
+    for (repo, number), is_pr in threads.items():
+        for comment in await github.thread_comments(repo, number, is_pr):
+            await store.record_comment(comment)
+            count += 1
+    logger.info("Backfilled %s comment(s) for %s thread(s)", count, len(threads))
+    return count
+
+
 @dataclass(frozen=True)
 class WorkItem:
     command: AgentCommand
@@ -63,6 +87,7 @@ class AgentService:
             maxsize=settings.queue_size
         )
         self.worker_task: asyncio.Task | None = None
+        self.backfill_task: asyncio.Task | None = None
         self.checkpoint_conn: aiosqlite.Connection | None = None
         self.checkpointer: AsyncSqliteSaver | None = None
         self.agent_graph: CodingAgentGraph | None = None
@@ -81,6 +106,8 @@ class AgentService:
             logger.info("Langfuse tracing enabled for LangGraph runs")
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         await self.store.open()
+        self.github.on_comment = self.store.record_comment
+        self.backfill_task = asyncio.create_task(self._backfill_comments(), name="comment-backfill")
         self.checkpoint_conn = await aiosqlite.connect(self.settings.database_path)
         self.checkpointer = AsyncSqliteSaver(self.checkpoint_conn)
         await self.checkpointer.setup()
@@ -120,6 +147,9 @@ class AgentService:
         self.worker_task = asyncio.create_task(self._worker(), name="coding-agent-worker")
 
     async def close(self) -> None:
+        if self.backfill_task:
+            self.backfill_task.cancel()
+            await asyncio.gather(self.backfill_task, return_exceptions=True)
         if self.worker_task:
             self.worker_task.cancel()
             await asyncio.gather(self.worker_task, return_exceptions=True)
@@ -131,6 +161,16 @@ class AgentService:
         await self.store.close()
         if self.langfuse_client:
             await asyncio.to_thread(self.langfuse_client.shutdown)
+
+    async def _backfill_comments(self) -> None:
+        """Pull comments and titles of recent runs from GitHub, so the dashboard has history
+        from before comments were recorded. Best effort: failures are only logged."""
+        try:
+            await backfill_comments(self.store, self.github)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Comment backfill failed", exc_info=True)
 
     async def _record_pi_event(self, run_id: str, phase: str, event: dict) -> None:
         event_type = str(event.get("type", "unknown"))
@@ -418,8 +458,8 @@ class AgentService:
                 "thread_id": thread_id,
                 "command_name": "start",
                 "triggering_comment_id": item.comment_id,
-                "auto_approve": item.command.text == "auto"
-                or not self.settings.require_plan_approval,
+                "approval_mode": "never" if item.command.text == "auto"
+                else self.settings.plan_approval,
             },
             self._config(thread_id, run_id, item, "start"),
         )

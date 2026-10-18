@@ -27,9 +27,14 @@ sequenceDiagram
     G->>SB: agent.sh pi (read-only tools)
     SB->>PI: prompt via stdin
     PI-->>G: JSONL events (streamed)
-    PI-->>G: submit_result {status: ready, plan}
-    G->>GH: comment "Proposed plan (v1)"
-    G->>G: interrupt() → checkpoint
+    PI-->>G: submit_result {status: ready, plan, complexity}
+    alt approval needed (complex, long plan, or mode=true)
+        G->>GH: comment "Proposed plan (v1)" + why approval is needed
+        G->>G: interrupt() → checkpoint
+    else simple plan in auto mode
+        G->>GH: comment "Plan (v1) — implementing without approval"
+        Note over G: continues straight to implement_with_pi
+    end
     W->>SB: sbx stop (not billed while waiting)
     W->>DB: work item done
 ```

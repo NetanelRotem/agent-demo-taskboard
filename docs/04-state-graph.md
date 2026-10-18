@@ -6,7 +6,7 @@
 
 ![The agent graph, simplified](graph-slide.png)
 
-כחול: Pi עובד. צהוב: הגרף עוצר ומחכה לאדם. ירוק: השרת מריץ בדיקות. סגול: עבודה מול GitHub. היציאות ל־`finish` (כשל או עצירה) הושמטו. המקור: [graph-slide.mmd](graph-slide.mmd).
+כחול: Pi עובד. צהוב: הגרף עוצר ומחכה לאדם. ירוק: השרת מריץ בדיקות. סגול: עבודה מול GitHub. החץ העבה הוא תוכנית פשוטה במצב `auto`, שעוקפת את האישור. החלק התחתון חוזר על עצמו בכל סבב review. היציאות ל־`finish` (כשל או עצירה) הושמטו. המקור: [graph-slide.mmd](graph-slide.mmd).
 
 ## הגרף
 
@@ -21,7 +21,7 @@ stateDiagram-v2
     load_issue --> finish: workspace failed
 
     plan_with_pi --> human_input: plan ready / question
-    plan_with_pi --> implement_with_pi: auto approve
+    plan_with_pi --> implement_with_pi: no approval needed
     plan_with_pi --> finish: failed / stopped
 
     human_input --> implement_with_pi: approve
@@ -60,7 +60,7 @@ stateDiagram-v2
 | Node | מה הוא עושה | כלים של Pi |
 |------|-------------|------------|
 | `load_issue` | טוען את ה־Issue והתגובות, מחשב `requirements_version` (hash של הדרישות), ויוצר branch ו־sandbox. | — |
-| `plan_with_pi` | Pi חוקר את הקוד ומגיש תוכנית, שאלות או כשל. | `read, grep, find, ls` |
+| `plan_with_pi` | Pi חוקר את הקוד ומגיש תוכנית, שאלות או כשל, ודירוג `simple`/`complex`. כאן נקבע אם התוכנית ממשיכה ישר למימוש או מחכה לאישור (ראו בהמשך). | `read, grep, find, ls` |
 | `human_input` | מפרסם תוכנית או שאלה כתגובה ונעצר (`interrupt`). כשמגיעה תשובה, היא נרשמת ב־`decisions`. | — |
 | `implement_with_pi` | Pi מממש את התוכנית המאושרת. בניסיון חוזר הוא מקבל את הפלט של הבדיקות שנכשלו. | `read, bash, edit, write, grep, find, ls` |
 | `verify` | השרת בודק שהשינויים בתוך התיקייה המותרת ומריץ lint ו־build. | — |
@@ -69,6 +69,24 @@ stateDiagram-v2
 | `implement_review` | Pi מתקן לפי ה־review באותו sandbox ובאותו session. | כמו במימוש |
 | `push_review` | commit נוסף לאותו PR. | — |
 | `finish` | תגובת סיכום: סטטוס, קבצים שהשתנו ובדיקות. | — |
+
+## מתי התוכנית עוקפת את האישור
+
+אחרי `plan_with_pi`, ‏`_approval_decision` מחליט לפי `REQUIRE_PLAN_APPROVAL`:
+
+```mermaid
+flowchart LR
+    P[plan_with_pi] --> Q{"questions?"}
+    Q -->|yes| H[human_input]
+    Q -->|no| M{"mode"}
+    M -->|always| H
+    M -->|never| I[implement_with_pi]
+    M -->|auto| C{"Pi: simple<br/>and ≤ max steps?"}
+    C -->|yes| I
+    C -->|no| H
+```
+
+ההחלטה והסיבה נשמרות ב־state (`auto_approve`, ‏`approval_reason`), והסיבה מופיעה בתגובה ב־Issue. מגבלת הצעדים (`AUTO_APPROVE_MAX_STEPS`) נבדקת בקוד ולא תלויה בדירוג של Pi.
 
 ## לולאת התיקון
 

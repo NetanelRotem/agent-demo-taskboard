@@ -12,6 +12,7 @@ flowchart LR
     G --> CP[("checkpoints<br/>graph state per node")]
     G --> R[("runs<br/>status, branch, PR")]
     G --> RQ[("requests<br/>plan / question comments")]
+    WH --> CM[("comments<br/>every GitHub comment")]
 ```
 
 | טבלה | מה היא מבטיחה |
@@ -20,6 +21,7 @@ flowchart LR
 | LangGraph checkpoints | הגרף ממשיך מה־node האחרון שהושלם, לא מההתחלה. |
 | `runs` | run פעיל אחד לכל Issue, ומיפוי PR → run בשביל reviews. |
 | `requests` | כל תגובה שהסוכן מפרסם מקבלת מזהה ו־hash. אם הגרף רץ שוב על אותו node, התגובה לא תתפרסם פעמיים. |
+| `comments` | כל תגובה, review והערת inline נשמרת פעם אחת (מפתח: סוג + מזהה GitHub), גם אם ה־webhook מגיע שוב. בעליית השרת הוא משלים מ־GitHub הערות שפוספסו בזמן שהיה למטה. |
 
 ## תרחישי כשל
 

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
-from agent_models import AGENT_COMMENT_MARKER, IssueContext, requirements_hash
+from agent_models import (
+    AGENT_COMMENT_MARKER,
+    IssueContext,
+    is_agent_generated_comment,
+    requirements_hash,
+)
 
 
 class GitHubError(RuntimeError):
@@ -24,6 +29,8 @@ class GitHubClient:
             base_url="https://api.github.com", headers=headers, timeout=30
         )
         self._owns_client = client is None
+        # Called with each comment the agent posts, so the dashboard has it immediately.
+        self.on_comment: Callable[[dict], Awaitable[None]] | None = None
 
     async def close(self) -> None:
         if self._owns_client:
@@ -71,6 +78,11 @@ class GitHubClient:
         result = await self._request(
             "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body}
         )
+        if self.on_comment is not None:
+            try:
+                await self.on_comment(comment_record("issue", repo, number, result))
+            except Exception:
+                pass
         return int(result["id"])
 
     async def add_reaction(self, repo: str, comment_id: int, content: str = "+1") -> None:
@@ -134,3 +146,42 @@ class GitHubClient:
                 for comment in comments
             ],
         }
+
+    async def thread_comments(self, repo: str, number: int, is_pr: bool) -> list[dict]:
+        """Every comment on an issue, or on a PR including reviews and inline comments."""
+        records = [
+            comment_record("issue", repo, number, item)
+            for item in await self._all_pages(f"/repos/{repo}/issues/{number}/comments")
+        ]
+        if is_pr:
+            for review in await self._all_pages(f"/repos/{repo}/pulls/{number}/reviews"):
+                if review.get("body") or str(review.get("state")).upper() != "COMMENTED":
+                    records.append(comment_record("review", repo, number, review))
+            records.extend(
+                comment_record("review_comment", repo, number, item)
+                for item in await self._all_pages(f"/repos/{repo}/pulls/{number}/comments")
+            )
+        return records
+
+    async def issue_title(self, repo: str, number: int) -> str:
+        issue = await self._request("GET", f"/repos/{repo}/issues/{number}")
+        return str(issue.get("title") or "")
+
+
+def comment_record(source: str, repo: str, number: int, item: dict) -> dict:
+    """A GitHub comment/review object in the shape AgentStore.record_comment stores."""
+    body = str(item.get("body") or "")
+    return {
+        "source": source,
+        "comment_id": item.get("id"),
+        "repo": repo,
+        "number": number,
+        "author": (item.get("user") or {}).get("login"),
+        "from_agent": is_agent_generated_comment(item)
+        or (item.get("user") or {}).get("type") == "Bot",
+        "body": body.replace(AGENT_COMMENT_MARKER, "").strip(),
+        "url": item.get("html_url"),
+        "path": item.get("path"),
+        "state": str(item["state"]).lower() if item.get("state") else None,
+        "created_at": item.get("submitted_at") or item.get("created_at"),
+    }

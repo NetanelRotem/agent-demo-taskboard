@@ -13,8 +13,9 @@
 ```mermaid
 flowchart LR
     I["📝 Issue<br/>what to build"] --> P["📋 Plan<br/>agent proposes"]
-    P --> A{"👤 Human<br/>approves?"}
-    A -->|yes| C["⚙️ Code<br/>in a cloud sandbox"]
+    P -->|"simple plan"| C["⚙️ Code<br/>in a cloud sandbox"]
+    P -->|"complex or unclear"| A{"👤 Human<br/>approves?"}
+    A -->|yes| C
     A -->|"no + reason"| P
     C --> V["✅ Checks<br/>lint + build"]
     V -->|fail| C
@@ -26,7 +27,7 @@ flowchart LR
 
 ## שלושה עקרונות
 
-1. **האדם מחליט, הסוכן מבצע.** יש שתי נקודות בקרה אנושיות: אישור התוכנית לפני שנכתבת שורת קוד, ו־review על ה־PR לפני המיזוג. המיזוג תמיד ידני.
+1. **האדם מחליט, הסוכן מבצע.** יש שתי נקודות בקרה אנושיות: אישור התוכנית לפני שנכתבת שורת קוד, ו־review על ה־PR לפני המיזוג. במצב `auto` הסוכן מדלג על האישור רק בשינוי פשוט, ועוצר כשהשינוי מורכב או לא ברור. המיזוג תמיד ידני.
 2. **הסוכן לא מקבל מפתחות.** הוא רץ ב־sandbox בענן בלי טוקן של GitHub ובלי מפתח API. הסודות מתווספים לבקשות ברמת הרשת, מחוץ להישג ידו.
 3. **בדיקות, לא הבטחות.** השרת לא סומך על מה שהסוכן אומר שבדק. הוא מריץ את הבדיקות בעצמו, ו־PR נפתח רק אם הן עוברות.
 
@@ -48,3 +49,4 @@ flowchart LR
 | סביבת ריצה מבודדת | Docker Cloud Sandboxes (`sbx --cloud`) |
 | התראות | Telegram, עם Topic לכל Issue |
 | Tracing | Langfuse |
+| מעקב חי אחרי כל run, הערות ועלויות | דשבורד ב־`/dashboard`, נקרא מ־SQLite |
