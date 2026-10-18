@@ -1,16 +1,16 @@
-# 4. גרף המצבים
+# 4. The state graph
 
-> **בקצרה:** כל run הוא מעבר בין nodes. בכל node הגרף שומר checkpoint, ובנקודות ההחלטה הוא נעצר עד שאדם עונה.
+> **In short:** every run is a walk between nodes. The graph saves a checkpoint at every node, and at decision points it stops until a person replies.
 
-## בתמונה אחת (לשקף)
+## In one picture (for a slide)
 
 ![The agent graph, simplified](graph-slide.png)
 
-כחול: Pi עובד. צהוב: הגרף עוצר ומחכה לאדם. ירוק: השרת מריץ בדיקות. סגול: עבודה מול GitHub. החץ העבה הוא תוכנית פשוטה במצב `auto`, שעוקפת את האישור. החלק התחתון חוזר על עצמו בכל סבב review. היציאות ל־`finish` (כשל או עצירה) הושמטו. המקור: [graph-slide.mmd](graph-slide.mmd).
+Blue: Pi is working. Yellow: the graph stops and waits for a person. Green: the server runs checks. Purple: work against GitHub. The thick arrow is a simple plan in `auto` mode, which skips approval. The lower part repeats for every review round. Exits to `finish` (failure or stop) are omitted. Source: [graph-slide.mmd](graph-slide.mmd).
 
-## הגרף
+## The graph
 
-הדיאגרמה כאן מצוירת ביד ומסבירה את המעברים. הגרסה שנוצרת אוטומטית מהקוד נמצאת ב־[langgraph.md](langgraph.md), והגרסה החיה בכתובת `/graph` של השרת (ראו [08](08-observability.md)).
+This diagram is drawn by hand and explains the transitions. The version generated from the code is in [langgraph.md](langgraph.md), and the live version is at the server's `/graph` (see [08](08-observability.md)).
 
 ```mermaid
 stateDiagram-v2
@@ -55,24 +55,24 @@ stateDiagram-v2
     end note
 ```
 
-## ה־nodes
+## The nodes
 
-| Node | מה הוא עושה | כלים של Pi |
-|------|-------------|------------|
-| `load_issue` | טוען את ה־Issue והתגובות, מחשב `requirements_version` (hash של הדרישות), ויוצר branch ו־sandbox. | — |
-| `plan_with_pi` | Pi חוקר את הקוד ומגיש תוכנית, שאלות או כשל, ודירוג `simple`/`complex`. כאן נקבע אם התוכנית ממשיכה ישר למימוש או מחכה לאישור (ראו בהמשך). | `read, grep, find, ls` |
-| `human_input` | מפרסם תוכנית או שאלה כתגובה ונעצר (`interrupt`). כשמגיעה תשובה, היא נרשמת ב־`decisions`. | — |
-| `implement_with_pi` | Pi מממש את התוכנית המאושרת. בניסיון חוזר הוא מקבל את הפלט של הבדיקות שנכשלו. | `read, bash, edit, write, grep, find, ls` |
-| `verify` | השרת בודק שהשינויים בתוך התיקייה המותרת ומריץ lint ו־build. | — |
-| `publish_pr` | בודק שהקוד לא השתנה מאז הבדיקות, ואז commit, push ו־PR. | — |
-| `review` | טוען את סיכום ה־review ואת ה־inline comments. | — |
-| `implement_review` | Pi מתקן לפי ה־review באותו sandbox ובאותו session. | כמו במימוש |
-| `push_review` | commit נוסף לאותו PR. | — |
-| `finish` | תגובת סיכום: סטטוס, קבצים שהשתנו ובדיקות. | — |
+| Node | What it does | Pi's tools |
+|------|--------------|------------|
+| `load_issue` | Loads the Issue and its comments, computes `requirements_version` (a hash of the requirements), and creates the branch and sandbox. | — |
+| `plan_with_pi` | Pi explores the code and submits a plan, questions or a failure, plus a `simple`/`complex` rating. This is where the plan either goes straight to implementation or waits for approval (see below). | `read, grep, find, ls` |
+| `human_input` | Posts the plan or question as a comment and stops (`interrupt`). When a reply arrives, it is recorded in `decisions`. | — |
+| `implement_with_pi` | Pi implements the approved plan. On a retry it gets the output of the failed checks. | `read, bash, edit, write, grep, find, ls` |
+| `verify` | The server checks that the changes stay inside the allowed folder and runs lint and build. | — |
+| `publish_pr` | Checks that the code hasn't changed since it was verified, then commits, pushes and opens the PR. | — |
+| `review` | Loads the review summary and its inline comments. | — |
+| `implement_review` | Pi fixes according to the review, in the same sandbox and session. | Same as implementation |
+| `push_review` | Another commit on the same PR. | — |
+| `finish` | Summary comment: status, changed files and checks. | — |
 
-## מתי התוכנית עוקפת את האישור
+## When a plan skips approval
 
-אחרי `plan_with_pi`, ‏`_approval_decision` מחליט לפי `REQUIRE_PLAN_APPROVAL`:
+After `plan_with_pi`, `_approval_decision` decides according to `REQUIRE_PLAN_APPROVAL`:
 
 ```mermaid
 flowchart LR
@@ -86,9 +86,9 @@ flowchart LR
     C -->|no| H
 ```
 
-ההחלטה והסיבה נשמרות ב־state (`auto_approve`, ‏`approval_reason`), והסיבה מופיעה בתגובה ב־Issue. מגבלת הצעדים (`AUTO_APPROVE_MAX_STEPS`) נבדקת בקוד ולא תלויה בדירוג של Pi.
+The decision and its reason are kept in the state (`auto_approve`, `approval_reason`), and the reason appears in the Issue comment. The step limit (`AUTO_APPROVE_MAX_STEPS`) is checked in code and doesn't depend on Pi's rating.
 
-## לולאת התיקון
+## The fix loop
 
 ![Fix loop](fix-loop.png)
 
@@ -100,11 +100,11 @@ flowchart LR
     V -->|"fail, N = 3"| X[finish: failed]
 ```
 
-`AGENT_MAX_ATTEMPTS` (ברירת מחדל 3) מגביל את מספר הניסיונות. בכל ניסיון Pi מקבל את 2,000 התווים האחרונים מהפלט של כל בדיקה שנכשלה, וממשיך באותו session, כך שהוא זוכר מה כבר ניסה.
+`AGENT_MAX_ATTEMPTS` (default 3) limits the number of attempts. On each attempt Pi gets the last 2,000 characters of output from every failed check, and continues in the same session, so it remembers what it already tried.
 
-## הגנות מובנות בגרף
+## Safeguards built into the graph
 
-- **דרישות שהשתנו:** אם ה־Issue נערך בזמן שהתוכנית חיכתה לאישור, `approve` הופך ל־`requirements_changed` והסוכן מתכנן מחדש.
-- **אישור ישן:** אישור של גרסת תוכנית קודמת נדחה ("That approval is for an old plan version").
-- **קוד שהשתנה אחרי בדיקה:** ‏`publish_pr` ו־`push_review` משווים את ה־revision (‏hash של HEAD ושל הקבצים) למה שנבדק. אם יש פער, הם מריצים בדיקות שוב או מסרבים.
-- **review בלי שינוי:** אם Pi "תיקן" review בלי לשנות קוד, הבדיקה נכשלת.
+- **Changed requirements:** if the Issue is edited while the plan waits for approval, `approve` becomes `requirements_changed` and the agent re-plans.
+- **Stale approval:** an approval for an older plan version is rejected ("That approval is for an old plan version").
+- **Code changed after verification:** `publish_pr` and `push_review` compare the revision (a hash of HEAD and the files) with what was verified. If they differ, they re-run the checks or refuse.
+- **Review without changes:** if Pi "fixed" a review without changing any code, verification fails.

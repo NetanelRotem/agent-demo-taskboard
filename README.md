@@ -1,11 +1,11 @@
 # Agent Demo Taskboard
 
-סוכן קוד שמקבל משימה מ־GitHub Issue, מתכנן, כותב קוד ב־sandbox בענן, מריץ בדיקות ופותח Pull Request. האפליקציה שעליה הוא עובד בדמו היא אפליקציית Todo.
+A coding agent that takes a task from a GitHub Issue, plans it, writes the code in a cloud sandbox, runs the checks and opens a Pull Request. The app it works on in the demo is a Todo app.
 
-| תיקייה | מה יש בה |
+| Folder | What's in it |
 |---|---|
-| [coding-agent-graph](coding-agent-graph/README.md) | הסוכן: שרת FastAPI, גרף LangGraph, הרצת Pi ב־Docker Cloud Sandboxes, ודשבורד חי ב־`/dashboard` |
-| [todo-app](todo-app/README.md) | אפליקציית Todo ב־React, ‏TypeScript ו־Vite. מתפרסמת ל־GitHub Pages בכל מיזוג ל־`main` |
-| [docs](docs/README.md) | איך הסוכן עובד, מהסקירה ועד הפרטים, עם דיאגרמות לשקפים |
+| [coding-agent-graph](coding-agent-graph/README.md) | The agent: a FastAPI server, a LangGraph workflow, Pi running in Docker Cloud Sandboxes, and a live dashboard at `/dashboard` |
+| [todo-app](todo-app/README.md) | A Todo app in React, TypeScript and Vite, published to GitHub Pages on every merge to `main` |
+| [docs](docs/README.md) | How the agent works, from the overview down to the details, with diagrams ready for slides |
 
-**להתחלה:** ההתקנה וההגדרה ב־[coding-agent-graph/README.md](coding-agent-graph/README.md#התקנה-והרצה), והשימוש היומיומי בראש אותו קובץ ([שימוש יומיומי](coding-agent-graph/README.md#שימוש-יומיומי-התחלה-מהירה)).
+**Getting started:** installation and setup are in [coding-agent-graph/README.md](coding-agent-graph/README.md#installation), and daily use is at the top of the same file ([Daily use](coding-agent-graph/README.md#daily-use-quick-start)).

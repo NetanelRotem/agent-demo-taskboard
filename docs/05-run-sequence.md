@@ -1,8 +1,8 @@
-# 5. ריצה מקצה לקצה
+# 5. End-to-end run
 
-> **בקצרה:** כל webhook הופך לפריט עבודה שמור. ה־worker מריץ את הגרף עד שהוא נעצר, משהה את ה־sandbox ומשתחרר.
+> **In short:** every webhook becomes a stored work item. The worker runs the graph until it stops, pauses the sandbox, and lets go.
 
-## מ־`/agent start` עד תוכנית
+## From `/agent start` to a plan
 
 ```mermaid
 sequenceDiagram
@@ -39,7 +39,7 @@ sequenceDiagram
     W->>DB: work item done
 ```
 
-## מאישור עד PR
+## From approval to PR
 
 ```mermaid
 sequenceDiagram
@@ -68,7 +68,7 @@ sequenceDiagram
     W->>SB: sbx stop
 ```
 
-## Review ו־merge
+## Review and merge
 
 ```mermaid
 sequenceDiagram
@@ -88,11 +88,11 @@ sequenceDiagram
     W->>GH: comment "workspace was removed"
 ```
 
-## איך Pi מחזיר תוצאה
+## How Pi returns a result
 
-Pi לא מסיים בטקסט חופשי. הוא קורא לכלי `submit_result`, והכלי:
-- אוכף סכמה: `status`, ‏`summary`, ‏`plan`, ‏`questions`, ‏`claimed_checks`.
-- מגביל את הסטטוסים לפי השלב: `ready | needs_input | failed` בתכנון, ‏`completed | needs_input | failed` במימוש.
-- מחזיר `terminate: true`, כך שאין סבב LLM מיותר אחרי ההגשה.
+Pi doesn't finish with free text. It calls the `submit_result` tool, which:
+- Enforces a schema: `status`, `summary`, `plan`, `questions`, `claimed_checks`, and while planning also `complexity` and `complexity_reason`.
+- Limits the statuses by phase: `ready | needs_input | failed` while planning, `completed | needs_input | failed` while implementing.
+- Returns `terminate: true`, so there is no wasted LLM turn after the submission.
 
-השרת קורא את התוצאה מאירוע `tool_execution_end`. חילוץ JSON מטקסט נשאר רק כ־fallback למודלים שלא קוראים לכלי.
+The server reads the result from the `tool_execution_end` event. Extracting JSON from text remains only as a fallback for models that don't call the tool.

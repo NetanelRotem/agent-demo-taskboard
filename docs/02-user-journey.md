@@ -1,8 +1,8 @@
-# 2. מסע המשתמש
+# 2. User journey
 
-> **מה המשתמש רואה:** הכול קורה בתגובות על ה־Issue וה־PR. אין ממשק נוסף ללמוד. מי שרוצה לראות את כל התמונה פותח את הדשבורד ב־`/dashboard` ([08](08-observability.md)).
+> **What the user sees:** everything happens in comments on the Issue and the PR. There is no extra interface to learn. For the full picture, open the dashboard at `/dashboard` ([08](08-observability.md)).
 
-## המסלול המלא
+## The full path
 
 ```mermaid
 sequenceDiagram
@@ -39,22 +39,22 @@ sequenceDiagram
     AG-->>TG: 📦 PR merged, sandbox deleted
 ```
 
-## הפקודות
+## Commands
 
-כל פקודה היא תגובה על ה־Issue. רק משתמשים שמופיעים ב־`AUTHORIZED_GITHUB_USERS` יכולים להפעיל את הסוכן.
+Every command is a comment on the Issue. Only users listed in `AUTHORIZED_GITHUB_USERS` can command the agent.
 
-| פקודה | מתי | מה קורה |
-|-------|-----|---------|
-| `/agent start` | על Issue חדש | פותח run: תכנון, ואז אישור לפי `REQUIRE_PLAN_APPROVAL` (ראו בהמשך) |
-| `/agent start auto` | כשסומכים על הסוכן במשימה | מדלג על אישור התוכנית. שאלות הבהרה עדיין עוצרות |
-| `/agent approve` | אחרי שהתוכנית פורסמה | מתחיל לכתוב קוד |
-| `/agent reject <reason>` | התוכנית לא טובה | הסוכן מתכנן מחדש עם הסיבה |
-| `/agent answer <text>` | הסוכן שאל שאלה | התשובה נכנסת להחלטות, והסוכן ממשיך |
-| `/agent stop` | בכל שלב | עוצר את ה־run, כולל Pi שרץ באותו רגע |
+| Command | When | What happens |
+|---------|------|--------------|
+| `/agent start` | On a new Issue | Opens a run: planning, then approval according to `REQUIRE_PLAN_APPROVAL` (see below) |
+| `/agent start auto` | When you trust the agent with the task | Skips plan approval. Clarifying questions still stop the run |
+| `/agent approve` | After the plan is posted | Starts writing code |
+| `/agent reject <reason>` | The plan is wrong | The agent re-plans with the reason |
+| `/agent answer <text>` | The agent asked a question | The answer is added to the decisions, and the agent continues |
+| `/agent stop` | At any point | Stops the run, including Pi if it is running |
 
-ל־`approve`, `answer` ו־`reject` אפשר להוסיף מזהה בקשה (למשל `/agent approve a1b2c3d4-p1-a`). בלי מזהה, הפקודה הולכת לבקשה שממתינה ב־Issue.
+`approve`, `answer` and `reject` accept a request ID (for example `/agent approve a1b2c3d4-p1-a`). Without one, the command goes to the request pending on the Issue.
 
-## שתי נקודות ההחלטה של האדם
+## The two human decision points
 
 ```mermaid
 flowchart LR
@@ -70,28 +70,28 @@ flowchart LR
     D2 -->|"request changes"| W
 ```
 
-- **שער 1** חוסך זמן: אם הסוכן הבין לא נכון, עוצרים אותו לפני שכתב קוד. מתי השער פעיל נקבע ב־`REQUIRE_PLAN_APPROVAL` (ראו בהמשך). עם `/agent start auto` מוותרים עליו לריצה אחת ומסתמכים על שער 2.
-- **שער 2** תמיד קיים: הסוכן לא ממזג. גם reviews נכנסים לעבודה רק ממשתמשים מורשים.
+- **Gate 1** saves time: if the agent misunderstood, you stop it before it writes code. When the gate applies is set by `REQUIRE_PLAN_APPROVAL` (see below). `/agent start auto` skips it for one run and relies on gate 2.
+- **Gate 2** always applies: the agent never merges. Reviews are also taken only from authorized users.
 
-## מתי הסוכן מחכה לאישור
+## When the agent waits for approval
 
-| `REQUIRE_PLAN_APPROVAL` | מתי שער 1 פעיל |
+| `REQUIRE_PLAN_APPROVAL` | When gate 1 applies |
 |---|---|
-| `true` (ברירת מחדל) | תמיד |
-| `auto` | רק כשהשינוי מורכב |
-| `false` | אף פעם |
+| `true` (default) | Always |
+| `auto` | Only when the change is complex |
+| `false` | Never |
 
-במצב `auto`, ‏Pi מדרג כל תוכנית כ־`simple` או `complex` ומוסיף משפט הסבר:
+In `auto` mode, Pi rates every plan `simple` or `complex` and adds a one-sentence reason:
 
-- **‏`simple`:** שינוי אחד, קטן ומוגדר באזור אחד, עם דרך ברורה. בלי תלות חדשה, בלי שינוי בפורמט הנתונים ובלי הסרת התנהגות. תוכנית כזו רצה מיד, והתגובה ב־Issue מסבירה למה.
-- **‏`complex`:** כמה פיצ'רים או דרישות, שינוי בכמה אזורים, תלות חדשה, שינוי בנתונים או בשמירה, או החלטת מוצר. התוכנית ממתינה ל־`/agent approve`, והתגובה מסבירה למה נדרש אישור.
-- **כשיש ספק** Pi מדרג `complex`.
-- **בדיקה בקוד:** תוכנית עם יותר מ־`AUTO_APPROVE_MAX_STEPS` צעדים (ברירת מחדל 4) תמיד ממתינה לאישור, גם אם Pi דירג אותה `simple`.
+- **`simple`:** one small, well-defined change in one area, with an obvious approach. No new dependency, no data format change and no removed behavior. Such a plan runs immediately, and the Issue comment explains why.
+- **`complex`:** several features or requirements, changes across several areas, a new dependency, data or storage changes, or a product decision. The plan waits for `/agent approve`, and the comment explains why approval is needed.
+- **When in doubt,** Pi rates it `complex`.
+- **Checked in code:** a plan with more than `AUTO_APPROVE_MAX_STEPS` steps (default 4) always waits for approval, even if Pi rated it `simple`.
 
-## כמה סבבי review
+## Multiple review rounds
 
-אחרי שה־PR נפתח, כל review עם **Request changes** או **Comment** פותח סבב: Pi מתקן, השרת מריץ בדיקות, ו־commit חדש נדחף לאותו PR. אפשר לחזור על זה כמה פעמים שרוצים, עד המיזוג. בדשבורד כל סבב מופיע בנפרד (Round 1, Round 2…), עם ההערות, העבודה של Pi והעלות שלו.
+Once the PR is open, every review with **Request changes** or **Comment** starts a round: Pi fixes, the server runs the checks, and a new commit is pushed to the same PR. This can repeat as many times as you like, until you merge. On the dashboard each round appears separately (Round 1, Round 2…), with its comments, Pi's work and its cost.
 
-## מה הסוכן יכול לשאול
+## What the agent may ask
 
-אם Pi נתקל בהחלטה שמשנה את התנהגות המוצר, הוא מחזיר `needs_input` במקום לנחש. זה קורה בכל אחד ממצבי האישור, גם ב־`false`. בחירות טכניות רגילות הוא אמור להסיק מהקוד. השאלה מתפרסמת כתגובה, וה־run מחכה. בזמן ההמתנה ה־sandbox מושהה ולא עולה כסף.
+If Pi hits a decision that changes how the product behaves, it returns `needs_input` instead of guessing. This happens in every approval mode, `false` included. Ordinary technical choices it is expected to infer from the code. The question is posted as a comment, and the run waits. While it waits, the sandbox is paused and costs nothing.

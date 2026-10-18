@@ -1,50 +1,50 @@
 # Coding Agent Graph
 
-סוכן קוד מקומי שמקבל פקודות מתגובות ב־GitHub Issues. FastAPI קולט webhooks, ‏LangGraph מנהל את התהליך והעצירות, Pi חוקר ועורך קוד ב־worktree ייעודי, ו־SQLite שומר checkpoints ומטא־דאטה.
+A coding agent driven by GitHub Issue comments. FastAPI receives webhooks, LangGraph runs the workflow and its pauses, Pi explores and edits the code in a dedicated workspace, and SQLite stores checkpoints and metadata.
 
-## שימוש יומיומי (התחלה מהירה)
+## Daily use (quick start)
 
-אחרי ההתקנה וההגדרה החד־פעמית (בהמשך), כך עובדים עם הסוכן.
+Once installation and the one-time setup (below) are done, this is how you work with the agent.
 
-**1. מפעילים את השרת** (טרמינל ראשון):
+**1. Start the server** (first terminal):
 
 ```powershell
 cd coding-agent-graph
 .venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-השרת מוכן כשמופיע `Uvicorn running on http://0.0.0.0:8000`. בלי `--reload`. אחרי שינוי קוד עוצרים (`Ctrl+C`) ומפעילים מחדש.
+The server is ready when it prints `Uvicorn running on http://0.0.0.0:8000`. Don't use `--reload`. After a code change, stop it (`Ctrl+C`) and start it again.
 
-**2. חושפים אותו ל־GitHub** (טרמינל שני), עם אחד מאלה:
+**2. Expose it to GitHub** (second terminal), with either of these:
 
 ```powershell
 & "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --url http://localhost:8000
 ngrok http 8000
 ```
 
-הכתובת שמודפסת, עם `/webhooks/github` בסוף, היא ה־Payload URL של ה־webhook ב־GitHub (ראו [חיבור GitHub](#חיבור-github)). ב־cloudflared וב־ngrok החינמי הכתובת משתנה בכל הפעלה, וצריך לעדכן אותה ב־GitHub.
+The printed address, followed by `/webhooks/github`, is the webhook's Payload URL in GitHub (see [Connecting GitHub](#connecting-github)). With cloudflared and free ngrok the address changes on every start, so update it in GitHub each time.
 
-**3. נותנים משימה:** פותחים Issue ב־repository ומגיבים עליו `/agent start`. הסוכן מגיב ב־👍 ומתחיל.
+**3. Give it a task:** open an Issue in the repository and comment `/agent start`. The agent reacts with 👍 and starts.
 
-**4. עוקבים:** פותחים את http://localhost:8000/dashboard. רואים שם את הפלאו, ההערות והעלויות בזמן אמת.
+**4. Follow along:** open http://localhost:8000/dashboard to see the flow, the comments and the costs in real time.
 
-**5. מגיבים כשצריך:**
+**5. Respond when needed:**
 
-| הסוכן כתב | עונים |
+| The agent wrote | You reply |
 |---|---|
-| "Proposed plan … Why approval is needed" | `/agent approve`, או `/agent reject <reason>` |
+| "Proposed plan … Why approval is needed" | `/agent approve`, or `/agent reject <reason>` |
 | "Agent needs input" | `/agent answer <text>` |
-| "Pull request ready for review" | review על ה־PR. ‏Request changes או Comment פותחים סבב תיקון נוסף |
+| "Pull request ready for review" | Review the PR. Request changes or Comment starts another fix round |
 
-**6. ממזגים את ה־PR ידנית.** הסוכן מוחק את ה־sandbox, וה־run נסגר. ‏`/agent stop` עוצר run בכל שלב.
+**6. Merge the PR yourself.** The agent deletes the sandbox and the run closes. `/agent stop` stops a run at any point.
 
-## תהליך העבודה
+## Workflow
 
 ```mermaid
 flowchart LR
     A[load_issue] --> B[plan_with_pi]
     B --> C[human_input]
-    B -->|auto approve| D
+    B -->|no approval needed| D
     C -->|answer / reject| B
     C -->|approve| D[implement_with_pi]
     C -->|stop| F[finish]
@@ -59,31 +59,31 @@ flowchart LR
     J -->|passed| K[push_review]
 ```
 
-Pi מתכנן עם כלי קריאה וחיפוש בלבד. לאחר אישור מפורש הוא מקבל כלי עריכה ו־shell בתוך ה־worktree. השירות עצמו בודק את ה־diff ומריץ `npm run lint` ו־`npm run build`; Pi אינו מקבל משתני GitHub ואינו מבצע push בעצמו. לאחר verification מוצלח השירות מבצע commit ו־push ופותח PR אוטומטית.
+Pi plans with read and search tools only. Once the plan is approved it gets edit and shell tools inside the workspace. The service itself checks the diff and runs `npm run lint` and `npm run build`; Pi gets no GitHub credentials and never pushes on its own. After successful verification the service commits, pushes and opens a PR automatically.
 
-כאשר נשלח review מסוג **Request changes** או **Comment**, השירות טוען את סיכום ה־review ואת ה־inline comments, מחזיר אותם ל־Pi באותו worktree/session, מאמת את התיקונים ודוחף commit נוסף לאותו PR. Review מסוג **Approve** אינו משנה קוד והמיזוג נשאר ידני.
+When a review of type **Request changes** or **Comment** is submitted, the service loads the review summary and its inline comments, hands them to Pi in the same workspace and session, verifies the fixes and pushes another commit to the same PR. An **Approve** review changes no code, and merging stays manual.
 
-### אישור תוכנית
+### Plan approval
 
-`REQUIRE_PLAN_APPROVAL` קובע מתי התוכנית ממתינה ל־`/agent approve`:
+`REQUIRE_PLAN_APPROVAL` decides when a plan waits for `/agent approve`:
 
-| ערך | מתי הסוכן מחכה לאישור |
+| Value | When the agent waits for approval |
 |---|---|
-| `true` (ברירת מחדל) | תמיד |
-| `auto` | רק כשהשינוי מורכב. Pi מדרג כל תוכנית כ־`simple` או `complex` ומסביר למה. תוכנית `simple` עם עד `AUTO_APPROVE_MAX_STEPS` צעדים (ברירת מחדל 4) רצה מיד. כל השאר ממתין לאישור |
-| `false` | אף פעם |
+| `true` (default) | Always |
+| `auto` | Only when the change is complex. Pi rates every plan `simple` or `complex` and explains why. A `simple` plan with at most `AUTO_APPROVE_MAX_STEPS` steps (default 4) runs immediately; everything else waits for approval |
+| `false` | Never |
 
-`complex` פירושו כמה פיצ'רים או דרישות, שינוי בכמה אזורים בקוד, תלות חדשה, שינוי בפורמט הנתונים או בשמירה, הסרה של התנהגות קיימת, או החלטת מוצר שאדם ירצה להכריע בה. כשיש ספק, Pi מדרג `complex`. מגבלת הצעדים נבדקת בקוד, כך שתוכנית ארוכה עוצרת גם אם Pi דירג אותה `simple`.
+`complex` means several features or requirements, changes across several areas of the code, a new dependency, a change to the data or storage format, removed behavior, or a product decision a person would want to weigh in on. When in doubt, Pi rates it `complex`. The step limit is enforced in code, so a long plan stops even if Pi rated it `simple`.
 
-כשהתוכנית רצה בלי אישור, היא מתפרסמת כתגובה אינפורמטיבית עם הסיבה, וה־PR נשאר נקודת הבקרה. כשהיא ממתינה, התגובה מסבירה למה נדרש אישור. בכל המצבים, אם משהו לא ברור, Pi שואל שאלה (`needs_input`) וה־run ממתין לתשובה. ‏`/agent start auto` מדלג על האישור עבור ריצה אחת.
+When a plan runs without approval, it is posted as an informational comment with the reason, and the PR remains the checkpoint. When it waits, the comment explains why approval is needed. In every mode, if something is unclear, Pi asks a question (`needs_input`) and the run waits for the answer. `/agent start auto` skips approval for a single run.
 
-### תוצאה מובנית מ־Pi
+### Structured results from Pi
 
-Pi מסיים כל שלב בקריאה לכלי `submit_result` (‏[pi_extensions/submit_result.ts](pi_extensions/submit_result.ts)), שנטען עם `--extension`. הסכמה נאכפת על ידי Pi, הסטטוסים המותרים מוגבלים לפי השלב (`ready|needs_input|failed` בתכנון, `completed|needs_input|failed` במימוש), והכלי מחזיר `terminate: true` כך שאין סבב LLM נוסף. השירות קורא את התוצאה מאירוע `tool_execution_end` במקום לחלץ JSON מטקסט חופשי; חילוץ מטקסט נשאר רק כ־fallback למודלים שלא קוראים לכלי.
+Pi ends every phase by calling the `submit_result` tool ([pi_extensions/submit_result.ts](pi_extensions/submit_result.ts)), loaded with `--extension`. Pi enforces the schema, the allowed statuses depend on the phase (`ready|needs_input|failed` while planning, `completed|needs_input|failed` while implementing), and the tool returns `terminate: true` so there is no extra LLM turn. While planning, the result also carries `complexity` and `complexity_reason`. The service reads the result from the `tool_execution_end` event instead of extracting JSON from free text; text extraction remains only as a fallback for models that don't call the tool.
 
-## התקנה והרצה
+## Installation
 
-נדרש Python 3.11 ומעלה, Node.js, ‏Git ו־Pi.
+Requires Python 3.11+, Node.js, Git and Pi.
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent
@@ -98,20 +98,21 @@ cp .env.example .env
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-אין להפעיל את שרת הסוכן עם `--reload`: יצירת SQLite checkpoints ו־worktrees משנה קבצים מקומיים, ו־WatchFiles עלול להפעיל restart ולבטל את ה־worker באמצע ריצה. לאחר שינוי קוד, עצור והפעל את השרת מחדש ידנית.
+Don't run the agent server with `--reload`: SQLite checkpoints and workspaces change local files, and WatchFiles may restart the server and kill the worker mid-run. After a code change, stop and restart the server by hand.
 
-ב־Windows עם מספר גרסאות Python אפשר ליצור את הסביבה באמצעות `py -3.13 -m venv .venv`.
+On Windows with several Python versions installed, create the environment with `py -3.13 -m venv .venv`.
 
-יש להגדיר ב־`.env`:
+Set these in `.env`:
 
-- `GITHUB_TOKEN` — קריאת Issues, כתיבת תגובות, ובהמשך push ופתיחת PR. אם הוא ריק, השירות קורא את הטוקן המקומי מ־`gh auth token`. אין בקשת ולידציה יזומה לטוקן.
-- `AUTHORIZED_GITHUB_USERS` — רשימת משתמשים מורשים מופרדת בפסיקים.
-- `OPENROUTER_API_KEY` — מפתח שנמסר רק לתהליך Pi.
-- `OPENROUTER_MODEL` — ברירת מחדל: `z-ai/glm-5.3`.
+- `GITHUB_TOKEN`: reads Issues, writes comments, and later pushes and opens PRs. If empty, the service uses the local token from `gh auth token`. The token is not validated up front.
+- `AUTHORIZED_GITHUB_USERS`: comma-separated list of users allowed to command the agent.
+- `OPENROUTER_API_KEY`: passed only to the Pi process.
+- `OPENROUTER_MODEL`: defaults to `z-ai/glm-5.3`.
+- `REQUIRE_PLAN_APPROVAL` and `AUTO_APPROVE_MAX_STEPS`: see [Plan approval](#plan-approval).
 
-### מעקב אחרי הגרף עם Langfuse
+### Tracing the graph with Langfuse
 
-כדי לראות כל הרצה כ־trace ואת סדר ה־nodes, הקלט/פלט, זמני הריצה והשגיאות, צור project ב־Langfuse והוסף ל־`.env`:
+To see every run as a trace, with the node order, inputs and outputs, timings and errors, create a Langfuse project and add to `.env`:
 
 ```dotenv
 LANGFUSE_PUBLIC_KEY=pk-lf-...
@@ -121,104 +122,108 @@ LANGFUSE_TRACING_ENVIRONMENT=development
 LANGFUSE_TRACING_ENABLED=true
 ```
 
-לאחר הפעלה מחדש של השרת, הרץ `/agent start` ופתח את **Tracing → Traces** ב־Langfuse. כל הפעלה או חידוש של הגרף מופיעים בשם `coding-agent:<action>`; כל מקטעי אותה ריצה מקובצים תחת session שזהה ל־`run_id`. אפשר לסנן גם לפי `repository`, ‏`issue_number`, ‏`action` והתגית `coding-agent-graph`.
+Restart the server, run `/agent start`, and open **Tracing → Traces** in Langfuse. Each invocation or resume of the graph appears as `coding-agent:<action>`, and all the pieces of one run are grouped under a session equal to the `run_id`. You can also filter by `repository`, `issue_number`, `action` and the `coding-agent-graph` tag.
 
-אם שני המפתחות אינם מוגדרים, Langfuse כבוי והשירות ממשיך לעבוד ללא שינוי. אפשר להשבית במפורש באמצעות `LANGFUSE_TRACING_ENABLED=false`. שים לב ש־Langfuse מקבל את מצב הגרף, לרבות תוכן ה־Issue, התוכנית והחלטות האדם; בחר סביבת אירוח ומדיניות retention שמתאימות לרגישות המידע שלך.
+If the keys are not set, Langfuse is off and the service works unchanged. Set `LANGFUSE_TRACING_ENABLED=false` to disable it explicitly. Note that Langfuse receives the graph state, including the Issue content, the plan and human decisions; pick a hosting option and retention policy that fit how sensitive your data is.
 
-כל webhook נבדק מול `GITHUB_WEBHOOK_SECRET`: השרת מחשב HMAC-SHA256 של גוף הבקשה ומשווה לכותרת `X-Hub-Signature-256`. חתימה חסרה או שגויה מחזירה `401`. אם הסוד לא מוגדר, השרת מסרב לכל webhook (`500`), כדי שאי אפשר יהיה לזייף payload עם שם של משתמש מורשה. ליצירת סוד: `python -c "import secrets; print(secrets.token_hex(32))"`.
+### Webhook signatures
 
-בשלב הפיתוח אפשר לכבות את הבדיקה עם `WEBHOOK_VERIFY_SIGNATURE=false`: השרת מקבל כל webhook בלי לבדוק חתימה וגם בלי סוד. ה־tunnel ציבורי, ולכן במצב הזה כל מי שמכיר את הכתובת יכול לשלוח פקודה בשם משתמש מורשה. לפני חשיפה אמיתית מחזירים ל־`true` (ברירת המחדל).
+Every webhook is checked against `GITHUB_WEBHOOK_SECRET`: the server computes an HMAC-SHA256 of the request body and compares it to the `X-Hub-Signature-256` header. A missing or wrong signature returns `401`. If no secret is configured, the server refuses every webhook (`500`), so nobody can forge a payload in an authorized user's name. To generate a secret: `python -c "import secrets; print(secrets.token_hex(32))"`.
 
-שאר ברירות המחדל מתועדות ב־`.env.example`. מצב LangGraph, בקשות, אירועי כלים, worktrees וסשני Pi נשמרים תחת `.agent-data` ואינם נשמרים ב־Git.
+During development you can turn the check off with `WEBHOOK_VERIFY_SIGNATURE=false`: the server then accepts any webhook without a signature or a secret. The tunnel is public, so in this mode anyone who knows the address can send a command as an authorized user. Set it back to `true` (the default) before exposing the server for real.
 
-גם תור ה־webhooks נשמר ב־SQLite. השרת מחזיר `accepted` רק לאחר שמירת פריט העבודה, ומחזיר אוטומטית פריטים במצב `queued` או `processing` לתור לאחר restart. כשל בלתי צפוי מנוסה עד שלוש פעמים לפני שהפריט מסומן `failed`; כך restart באמצע review אינו דורש יצירת הערה חדשה.
+The remaining defaults are documented in `.env.example`. LangGraph state, requests, tool events, workspaces and Pi sessions are stored under `.agent-data` and are not committed to Git.
 
-## הרצה בענן (Docker Cloud Sandboxes)
+The webhook queue is stored in SQLite as well. The server returns `accepted` only after the work item is saved, and after a restart it puts items in `queued` or `processing` state back on the queue. An unexpected failure is retried up to three times before the item is marked `failed`, so a restart in the middle of a review doesn't require a new comment.
 
-עם `EXECUTION_MODE=cloud` ב־`.env`, ‏Pi והפקודות על הקוד רצים ב־[Docker Cloud Sandbox](https://docs.docker.com/ai/sandboxes/cloud/) ולא על המחשב המקומי. כל run מקבל sandbox משלו בשם `agent-issue-<N>-<run>`, שנוצר מה־Kit הרשמי של Pi ([`docker.io/docker/sbx-kit-pi`](https://github.com/docker/sbx-kits-contrib/tree/v3/pi), Kit v3).
+## Running in the cloud (Docker Cloud Sandboxes)
 
-בתוך ה־sandbox הסקריפט [sandbox/agent.sh](sandbox/agent.sh) משכפל את ה־repository, יוצר את ה־branch ומריץ את Pi. אחר כך הוא מריץ `npm ci`, ‏`npm run lint` ו־`npm run build`, ולבסוף עושה commit ו־push. השירות מחליט מתי לדחוף: רק אחרי שהבדיקות עברו. אחר כך הוא פותח את ה־PR כמו במצב המקומי. אירועי Pi זורמים חזרה דרך `sbx exec`, כך ש־`pi_logs.py`, ‏Langfuse והתגובות ב־Issue עובדים בלי שינוי.
+With `EXECUTION_MODE=cloud` in `.env`, Pi and the commands on the code run in a [Docker Cloud Sandbox](https://docs.docker.com/ai/sandboxes/cloud/) instead of on the local machine. Each run gets its own sandbox named `agent-issue-<N>-<run>`, created from the official Pi Kit ([`docker.io/docker/sbx-kit-pi`](https://github.com/docker/sbx-kits-contrib/tree/v3/pi), Kit v3).
 
-**המפתחות לא נכנסים ל־sandbox.** הם שמורים ב־secret store של Docker, ו־proxy של ה־sandbox מוסיף אותם לבקשות היוצאות. בתוך ה־sandbox יש רק ערכי placeholder. הרשת חסומה כברירת מחדל (`deny-all`). מותר רק מה שה־Kit מצהיר עליו, וגם `SANDBOX_ALLOW_NETWORK`.
+Inside the sandbox, [sandbox/agent.sh](sandbox/agent.sh) clones the repository, creates the branch and runs Pi. It then runs `npm ci`, `npm run lint` and `npm run build`, and finally commits and pushes. The service decides when to push: only after the checks pass. It then opens the PR as in local mode. Pi's events stream back through `sbx exec`, so `pi_logs.py`, Langfuse, the dashboard and the Issue comments work unchanged.
 
-### הגדרה חד־פעמית
+**Keys never enter the sandbox.** They live in Docker's secret store, and the sandbox proxy adds them to outgoing requests. Inside the sandbox there are only placeholder values. The network is blocked by default (`deny-all`); only what the Kit declares, plus `SANDBOX_ALLOW_NETWORK`, is allowed.
+
+### One-time setup
 
 ```bash
 # Windows: winget install -h Docker.sbx
 sbx login
-sbx --cloud diagnose                        # כל השורות צריכות להיות ✓
+sbx --cloud diagnose                        # every line should show ✓
 
-sbx --cloud secret set github               # טוקן עם Contents: Read and write ל־repository
+sbx --cloud secret set github               # token with Contents: Read and write on the repository
 sbx --cloud secret set-custom --name openrouter --host openrouter.ai --env OPENROUTER_API_KEY
 ```
 
-OpenRouter אינו שירות מובנה בענן, ולכן הוא נשמר כ־custom secret: ה־proxy מוסיף `Authorization: Bearer <key>` לבקשות ל־`openrouter.ai`. הטוקן של GitHub משמש את ה־sandbox גם לדחיפה, לכן מומלץ fine‑grained PAT ל־repository הזה בלבד, יחד עם branch protection על `main`.
+OpenRouter is not a built-in cloud service, so it is stored as a custom secret: the proxy adds `Authorization: Bearer <key>` to requests to `openrouter.ai`. The sandbox also uses the GitHub token to push, so use a fine-grained PAT scoped to this repository only, together with branch protection on `main`.
 
-### מחזור החיים של sandbox
+### Sandbox lifecycle
 
-- ה־sandbox נוצר עם `--ttl 24h --on-timeout stop`. כשהזמן נגמר הוא נעצר ולא נמחק, ו־sandbox עצור אינו עולה כסף.
-- `sbx exec` מפעיל מחדש sandbox עצור, וזה לוקח כ־2 שניות. הקבצים וה־session של Pi נשמרים, כך שהמתנה לאישור או ל־review ממשיכה מאותה נקודה.
-- `/agent stop` עוצר גם את Pi שרץ בתוך ה־sandbox.
-- בזמן שהשירות מחכה לתשובה או ל־review, ה־sandbox נעצר ולא עולה כסף.
-- כשה־PR ממוזג או נסגר, השירות מוחק את ה־sandbox (במצב מקומי: את ה־worktree) ומסמן את ה־run כ־`merged` או `closed`. לשם כך ה־webhook צריך לכלול גם אירועי **Pull requests**. ניקוי ידני: `sbx --cloud ls` ואז `sbx --cloud rm <name>`.
+- The sandbox is created with `--ttl 24h --on-timeout stop`. When the time runs out it is stopped, not deleted, and a stopped sandbox costs nothing.
+- `sbx exec` restarts a stopped sandbox in about 2 seconds. Files and the Pi session are kept, so waiting for an approval or a review resumes from the same point.
+- `/agent stop` also stops Pi running inside the sandbox.
+- While the service waits for an answer or a review, the sandbox is stopped and costs nothing.
+- When the PR is merged or closed, the service deletes the sandbox (in local mode: the worktree) and marks the run `merged` or `closed`. For this the webhook must also include **Pull requests** events. Manual cleanup: `sbx --cloud ls`, then `sbx --cloud rm <name>`.
 
-### מעקב ידני
+### Inspecting by hand
 
 ```bash
-sbx --cloud ls                                   # sandboxes פעילים ועצורים
-sbx --cloud exec -it agent-issue-12-ab12cd34 bash # להיכנס, לראות קבצים ו־git diff
-sbx --cloud policy log agent-issue-12-ab12cd34   # בקשות רשת שנחסמו
+sbx --cloud ls                                   # running and stopped sandboxes
+sbx --cloud exec -it agent-issue-12-ab12cd34 bash # look around, files and git diff
+sbx --cloud policy log agent-issue-12-ab12cd34   # blocked network requests
 ```
 
-## חיבור GitHub
+## Connecting GitHub
 
-חשוף את השרת באמצעות tunnel, לדוגמה:
+Expose the server through a tunnel, for example:
 
 ```bash
 ngrok http 8000
 ```
 
-ב־repository פתח **Settings → Webhooks → Add webhook** והגדר:
+In the repository, open **Settings → Webhooks → Add webhook** and set:
 
 - Payload URL: `https://<tunnel-host>/webhooks/github`
 - Content type: `application/json`
-- Secret: אותו ערך כמו `GITHUB_WEBHOOK_SECRET` ב־`.env` (חובה, אלא אם `WEBHOOK_VERIFY_SIGNATURE=false`)
-- Events: **Issue comments**, ‏**Pull request reviews**, ‏**Pull request review comments** (להערות inline בדשבורד) ו־**Pull requests** (לניקוי אחרי מיזוג)
+- Secret: the same value as `GITHUB_WEBHOOK_SECRET` in `.env` (required, unless `WEBHOOK_VERIFY_SIGNATURE=false`)
+- Events: **Issue comments**, **Pull request reviews**, **Pull request review comments** (for inline comments on the dashboard) and **Pull requests** (for cleanup after merging)
 
-## דשבורד חי
+## Live dashboard
 
-השרת מגיש דשבורד בכתובת `/dashboard`. הוא מציג כל issue ו־PR, את הפלאו (Triggered → Plan → Approval → Implement → Verify → PR → Review → Done) עם משך ועלות לכל שלב, פירוט עלויות לפי phase, וציר זמן של כל ההערות, הפקודות, האישורים וסשנים של Pi, עם כל קריאת כלי. העדכונים מגיעים בזמן אמת ב־Server-Sent Events (`/api/stream`).
+The server serves a dashboard at `/dashboard`. It shows every issue and PR, the flow (Triggered → Plan → Approval → Implement → Verify → PR → Review → Done) with the duration and cost of each stage, a cost breakdown per phase, and a timeline of every comment, command, approval and Pi session, down to each tool call. Each review round appears separately. Updates arrive in real time over Server-Sent Events (`/api/stream`).
 
-כל הנתונים נקראים מ־SQLite. הערות GitHub נשמרות בטבלת `comments`: הערות שהסוכן כותב נשמרות כשהוא שולח אותן, ושאר ההערות (כולל reviews והערות inline) מגיעות מה־webhook. בעליית השרת הוא גם מושך מ־GitHub את ההערות והכותרות של ה־runs האחרונים, כדי שגם ההיסטוריה תופיע.
+All data is read from SQLite. GitHub comments are stored in the `comments` table: the agent's own comments when it posts them, everything else (including reviews and inline comments) from the webhook. On startup the server also pulls the comments and titles of recent runs from GitHub, so history shows up too.
 
-לצפייה בלי להריץ את הסוכן (קריאה בלבד מה־DB):
-
-```bash
-python dashboard.py --backfill    # מושך הערות וכותרות מ־GitHub ואז מגיש ב־http://127.0.0.1:8090/dashboard
-python dashboard.py               # בלי למשוך מ־GitHub
-```
-
-## אירועי מפתח ו־Telegram
-
-[events.py](events.py) מרכז את אירועי המפתח של כל run: התחלה; ‏sandbox שנוצר, הופעל, נעצר או נמחק; ניסיונות חוזרים מול Docker; תוכנית; שאלה שממתינה לתשובה; בדיקות שעברו או נכשלו; ‏PR שנפתח; תיקוני review; סיום; וסגירת PR. כל אירוע נשמר בטבלת `events` ב־SQLite ומופיע בלוג של השרת:
+To browse without running the agent (read-only from the database, `/graph` included):
 
 ```bash
-python events.py                      # האירועים האחרונים
-python events.py --follow             # מעקב רציף
-python events.py --run-id d83d7e04    # ציר הזמן של run אחד
+python dashboard.py --backfill    # pull comments and titles from GitHub, then serve on http://127.0.0.1:8090/dashboard
+python dashboard.py               # without pulling from GitHub
 ```
 
-אם מוגדרים גם `TELEGRAM_BOT_TOKEN` וגם `TELEGRAM_CHAT_ID`, האירועים נשלחים גם לקבוצת Telegram, עם Topic לכל Issue. אם אחד מהם חסר, Telegram כבוי. השליחה רצה בתור ברקע: תקלה ב־Telegram או עומס לא עוצרים ולא מאטים את ה־run, והאירוע נשאר ב־SQLite בכל מקרה. אם בקבוצה אין Topics, או שאין לבוט הרשאה לנהל אותם, ההודעות נשלחות לצ'אט הראשי. תוכן Issues ותוכניות מגיע ל־Telegram, וטוקנים ומפתחות מצונזרים.
+If the server is exposed through a tunnel, the dashboard and its API are exposed too, with no authentication.
 
-**הגדרת הקבוצה:**
-1. ב־[@BotFather](https://t.me/BotFather): ‏`/newbot`. הטוקן שמתקבל הולך ל־`TELEGRAM_BOT_TOKEN`.
-2. ליצור קבוצה, ובהגדרות שלה ‏(Edit) להפעיל **Topics**.
-3. להוסיף את הבוט לקבוצה ולמנות אותו ל־**Admin** עם ההרשאה **Manage Topics**.
-4. לשלוח הודעה כלשהי בקבוצה ולפתוח `https://api.telegram.org/bot<TOKEN>/getUpdates`. הערך של `chat.id` (מספר שמתחיל ב־`-100`) הולך ל־`TELEGRAM_CHAT_ID`.
+## Key events and Telegram
 
-## מעקב אחרי Pi
+[events.py](events.py) collects each run's key events: started; sandbox created, started, stopped or deleted; Docker retries; plan; question awaiting an answer; checks passed or failed; PR opened; review fixes; finished; and PR closed. Every event is stored in the SQLite `events` table and shows up in the server log:
 
-בזמן שהשרת רץ, אירועי Pi מופיעים ישירות במסוף של `uvicorn`:
+```bash
+python events.py                      # recent events
+python events.py --follow             # follow live
+python events.py --run-id d83d7e04    # one run's timeline
+```
+
+If both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, events are also sent to a Telegram group, with one Topic per Issue. If either is missing, Telegram is off. Delivery runs in a background queue: a Telegram outage or rate limit never blocks or slows a run, and the event stays in SQLite either way. If the group has no Topics, or the bot may not manage them, messages go to the main chat. Issue content and plans reach Telegram; tokens and keys are redacted.
+
+**Group setup:**
+1. In [@BotFather](https://t.me/BotFather): `/newbot`. The token goes to `TELEGRAM_BOT_TOKEN`.
+2. Create a group and enable **Topics** in its settings (Edit).
+3. Add the bot to the group and make it an **Admin** with the **Manage Topics** permission.
+4. Send any message in the group and open `https://api.telegram.org/bot<TOKEN>/getUpdates`. The `chat.id` value (a number starting with `-100`) goes to `TELEGRAM_CHAT_ID`.
+
+## Following Pi
+
+While the server runs, Pi's events appear directly in the `uvicorn` console:
 
 ```text
 INFO pi [run=12ab34cd phase=plan] tool start: read {"path":"todo-app/src/App.tsx"}
@@ -227,27 +232,27 @@ INFO pi [run=12ab34cd phase=implement] tool start: bash {"command":"npm run lint
 INFO pi [run=12ab34cd phase=implement] assistant: {"status":"completed",...}
 ```
 
-כל האירועים נשמרים גם ב־SQLite. להצגת ההיסטוריה:
+All events are also stored in SQLite. To show the history:
 
 ```bash
 python pi_logs.py
 ```
 
-למעקב רציף, בדומה ל־`tail -f`:
+To follow live, like `tail -f`:
 
 ```bash
 python pi_logs.py --follow
 ```
 
-אפשר לסנן לפי ה־run ID שמופיע בתגובות ה־Issue ובלוג:
+Filter by the run ID shown in the Issue comments and the log:
 
 ```bash
 python pi_logs.py --follow --run-id 12ab34cd
 ```
 
-`LOG_LEVEL=INFO` מציג התחלה וסיום של כל כלי ואת תשובת Pi. ‏`LOG_LEVEL=DEBUG` מציג גם עדכוני ביניים מכלים ארוכים. payloads נשמרים לאחר צנזור שדות רגישים וערכי המפתחות הידועים.
+`LOG_LEVEL=INFO` shows the start and end of every tool and Pi's replies. `LOG_LEVEL=DEBUG` also shows intermediate updates from long-running tools. Payloads are stored after redacting sensitive fields and known key values.
 
-## פקודות Issue
+## Issue commands
 
 ```text
 /agent start
@@ -258,15 +263,15 @@ python pi_logs.py --follow --run-id 12ab34cd
 /agent stop
 ```
 
-מזהה הבקשה אופציונלי: בלעדיו הפקודה מופנית לבקשה הממתינה של ה־run הפעיל ב־Issue (לכל Issue יש לכל היותר בקשה ממתינה אחת).
+The request ID is optional: without it, the command goes to the pending request of the Issue's active run (each Issue has at most one pending request).
 
-אין צורך ב־`/agent publish`: לאחר אימות מוצלח נפתח PR אוטומטית (לא כטיוטה). מספר ה־PR נשמר ב־SQLite ומשמש לקישור reviews עתידיים לאותו run. רק reviews ממשתמשים שמופיעים ב־`AUTHORIZED_GITHUB_USERS` נכנסים לתור העבודה. המיזוג נשאר ידני.
+There is no `/agent publish`: after successful verification a PR is opened automatically (not as a draft). The PR number is stored in SQLite and links future reviews to the same run. Only reviews from users listed in `AUTHORIZED_GITHUB_USERS` enter the work queue. Merging stays manual.
 
-## בדיקות
+## Tests
 
 ```bash
 pip install -r requirements-dev.txt
 pytest
 ```
 
-הבדיקות מכסות קליטת webhook ללא ולידציית טוקן, הרשאות, אירועים כפולים, אישור ישן, persistence ו־resume לאחר restart, פתיחת PR, שמירת מספר PR, קליטת reviews, עצירה, כשל Pi וכשל בבדיקות repository. [tests/test_cloud_sandbox.py](tests/test_cloud_sandbox.py) מכסה את מצב הענן עם `sbx` מדומה: יצירת sandbox עם TTL ו־network policy, שכפול ה־branch, הרצת Pi דרך `sbx exec`, בדיקות ו־push בתוך ה־sandbox, וניסיון חוזר כש־sandbox באמצע עצירה.
+The tests cover webhook intake and signatures, authorization, duplicate deliveries, stale approvals, persistence and resume after a restart, opening a PR, storing the PR number, review intake, stopping, Pi failures, repository check failures, plan approval modes, and the dashboard's timeline, costs and review rounds. [tests/test_cloud_sandbox.py](tests/test_cloud_sandbox.py) covers cloud mode with a fake `sbx`: creating a sandbox with a TTL and network policy, cloning the branch, running Pi through `sbx exec`, checks and push inside the sandbox, and retrying while a sandbox is still stopping.

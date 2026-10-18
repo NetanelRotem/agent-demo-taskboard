@@ -1,29 +1,29 @@
-# תיעוד: איך הסוכן עובד
+# Documentation: how the agent works
 
-סוכן קוד שמקבל משימה מ־GitHub Issue, מתכנן, מחכה לאישור כשהשינוי מורכב, כותב קוד בסביבה מבודדת בענן, מריץ בדיקות ופותח Pull Request. מי שכותב את ה־Issue לא יוצא מ־GitHub (או מ־Telegram).
+A coding agent that takes a task from a GitHub Issue, plans it, waits for approval when the change is complex, writes the code in an isolated cloud environment, runs the checks and opens a Pull Request. Whoever writes the Issue never has to leave GitHub (or Telegram).
 
-התיעוד מחולק לשכבות, מהכללי לפרטני. כל קובץ עומד בפני עצמו, וכל דיאגרמה בו יכולה להיות שקף.
+The documentation is layered, from the general to the detailed. Each file stands on its own, and every diagram in it can serve as a slide.
 
-| # | שכבה | השאלה שהיא עונה עליה | קהל |
-|---|------|------------------------|------|
-| 1 | [סקירה](01-overview.md) | מה זה ולמה זה מעניין? | כולם |
-| 2 | [מסע המשתמש](02-user-journey.md) | מה אני עושה ב־GitHub ומה אני מקבל? | משתמשים, מנהלים |
-| 3 | [ארכיטקטורה](03-architecture.md) | מאילו חלקים זה בנוי ואיך הם מדברים? | מפתחים |
-| 4 | [גרף המצבים](04-state-graph.md) | איך ה־run מתקדם, ואיפה הוא עוצר? | מפתחים |
-| 5 | [ריצה מקצה לקצה](05-run-sequence.md) | מה קורה בפועל משנייה לשנייה? | מפתחים |
-| 6 | [Sandbox ואבטחה](06-sandbox-security.md) | למה מותר לתת לסוכן לכתוב קוד? | מפתחים, אבטחה |
-| 7 | [אמינות](07-reliability.md) | מה קורה כשמשהו נופל? | מפתחים, תפעול |
-| 8 | [נראות](08-observability.md) | איך יודעים מה הסוכן עושה עכשיו, ובכמה זה עלה? | כולם |
-| — | [langgraph.md](langgraph.md) | הגרף כפי ש־LangGraph מצייר אותו (נוצר אוטומטית) | מפתחים |
+| # | Layer | The question it answers | Audience |
+|---|-------|--------------------------|----------|
+| 1 | [Overview](01-overview.md) | What is this, and why is it interesting? | Everyone |
+| 2 | [User journey](02-user-journey.md) | What do I do in GitHub, and what do I get? | Users, managers |
+| 3 | [Architecture](03-architecture.md) | What is it made of, and how do the parts talk? | Developers |
+| 4 | [State graph](04-state-graph.md) | How does a run move forward, and where does it stop? | Developers |
+| 5 | [End-to-end run](05-run-sequence.md) | What actually happens, second by second? | Developers |
+| 6 | [Sandbox and security](06-sandbox-security.md) | Why is it safe to let the agent write code? | Developers, security |
+| 7 | [Reliability](07-reliability.md) | What happens when something fails? | Developers, operations |
+| 8 | [Observability](08-observability.md) | How do you know what the agent is doing right now, and what it cost? | Everyone |
+| — | [langgraph.md](langgraph.md) | The graph as LangGraph draws it (generated) | Developers |
 
-## הצעה לסדר מצגת
+## Suggested presentation order
 
-1. **הבעיה והרעיון:** שקף פתיחה מ־[01](01-overview.md).
-2. **הדמו:** מסע המשתמש מ־[02](02-user-journey.md), תוך כדי הרצה חיה.
-3. **מה מתחת למכסה:** הארכיטקטורה מ־[03](03-architecture.md) וגרף המצבים מ־[04](04-state-graph.md).
-4. **למה אפשר לסמוך עליו:** הבידוד מ־[06](06-sandbox-security.md) והאמינות מ־[07](07-reliability.md).
-5. **סיום:** הדשבורד החי, Telegram ו־Langfuse מ־[08](08-observability.md), ומה הלאה.
+1. **The problem and the idea:** the opening slide from [01](01-overview.md).
+2. **The demo:** the user journey from [02](02-user-journey.md), run live.
+3. **Under the hood:** the architecture from [03](03-architecture.md) and the state graph from [04](04-state-graph.md).
+4. **Why you can trust it:** isolation from [06](06-sandbox-security.md) and reliability from [07](07-reliability.md).
+5. **Wrap-up:** the live dashboard, Telegram and Langfuse from [08](08-observability.md), and what comes next.
 
-## הערה על הדיאגרמות
+## About the diagrams
 
-הדיאגרמות כתובות ב־[Mermaid](https://mermaid.js.org) ומוצגות ישירות ב־GitHub וב־VS Code. הטקסט בתוכן באנגלית, כי Mermaid לא מטפל טוב בטקסט מימין לשמאל. ההסבר סביבן בעברית.
+The diagrams are written in [Mermaid](https://mermaid.js.org) and render directly on GitHub and in VS Code. The PNG versions used as slides are rendered from the same sources with the Mermaid CLI.
