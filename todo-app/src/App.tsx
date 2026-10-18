@@ -15,7 +15,7 @@ type Theme = 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'theme'
 
-const TODOS_STORAGE_KEY = 'todos'
+const TODOS_STORAGE_KEY = 'to_tooooooo'
 
 const PRIORITY_LEVELS = ['low', 'medium', 'high'] as const
 
