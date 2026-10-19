@@ -89,6 +89,12 @@ h1 {
   margin: 0;
 }
 
+.open-count {
+  margin: 0 0 20px;
+  font-size: 0.9rem;
+  color: var(--color-muted);
+}
+
 .theme-toggle {
   flex: none;
   padding: 8px 12px;

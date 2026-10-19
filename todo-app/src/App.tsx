@@ -201,6 +201,10 @@ function App() {
     )
   }
 
+  const openCount = todos.filter(
+    (todo) => !todo.deletedAt && !todo.completed,
+  ).length
+
   return (
     <main className="app">
       <section className="card" aria-labelledby="title">
@@ -219,6 +223,12 @@ function App() {
             {theme === 'dark' ? '☀️' : '🥇'}
           </button>
         </div>
+
+        <p className="open-count">
+          {openCount > 0
+            ? `${openCount} משימות פתוחות`
+            : 'אין משימות פתוחות'}
+        </p>
 
         <form onSubmit={addTodo}>
           <label className="sr-only" htmlFor="new-todo">
