@@ -24,6 +24,17 @@ flowchart LR
 - Inside the sandbox there are only placeholder values. Even if Pi prints its environment variables, it never sees a real key.
 - The proxy swaps the placeholder for the real value only on requests to allowed hosts.
 
+### Who holds which key
+
+| Key | Where it lives | Who uses it, and for what |
+|-----|----------------|---------------------------|
+| GitHub token (`github` cloud secret) | Docker's secret store | The sandbox, through the proxy: clone, fetch and push of the agent's branch. Use a fine-grained PAT scoped to this repository. |
+| OpenRouter key (`openrouter` cloud secret) | Docker's secret store | Pi, through the proxy: calls to the model. |
+| `GITHUB_TOKEN` | `.env` on the server | The server only: reading Issues, posting comments and **opening the PR**. Never passed to Pi or the sandbox. |
+| `GITHUB_WEBHOOK_SECRET` | `.env` on the server, and the webhook's **Secret** field in GitHub | The server only: checking that each webhook really came from GitHub. Never passed to Pi or the sandbox. |
+
+Neither the Kit image nor the sandbox contains a real key. The server strips `GITHUB_TOKEN`, `GH_TOKEN` and `GITHUB_WEBHOOK_SECRET` from the environment of every `sbx` and Pi process it starts.
+
 ## Layers of protection
 
 | Layer | What it prevents |
@@ -35,7 +46,7 @@ flowchart LR
 | **The server checks, not Pi** | Lint and build run from the server. What Pi "claims it checked" (`claimed_checks`) has no effect. |
 | **The server decides when to push** | Push happens only after the checks pass, and only if the revision matches the one that was verified. |
 | **No merging** | The agent opens a PR and never merges. Branch protection on `main` is recommended. |
-| **Webhook signature** | Every request is checked with HMAC-SHA256 against `GITHUB_WEBHOOK_SECRET`. Without a valid signature: `401`. With no secret configured, the server refuses every webhook. For development the check can be turned off with `WEBHOOK_VERIFY_SIGNATURE=false`, and then anyone who knows the tunnel address can send commands. Set it back to `true` before real exposure. |
+| **Webhook signature** | Every request is checked with HMAC-SHA256 against `GITHUB_WEBHOOK_SECRET`. Without a valid signature: `401`. With no secret configured, the server refuses every webhook. The `WEBHOOK_VERIFY_SIGNATURE` flag is on by default. For development it can be turned off (`false`), and then anyone who knows the tunnel address can send commands and the server logs a warning on startup. Turn it back on before real exposure. |
 | **Authorized users** | Commands and reviews only from `AUTHORIZED_GITHUB_USERS`. Bot comments are filtered out. |
 | **Redaction** | Tokens and keys are replaced with `[REDACTED]` in logs, SQLite and Telegram. |
 

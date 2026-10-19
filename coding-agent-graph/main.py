@@ -18,7 +18,7 @@ load_dotenv()
 
 from agent_models import AgentCommand
 from commands import CommandError, parse_command
-from config import Settings
+from config import Settings, webhook_verify_signature
 import graph_view
 from github_client import comment_record
 import dashboard
@@ -120,6 +120,11 @@ def extract_comment(event: str | None, payload: dict) -> dict | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
+    if not webhook_verify_signature():
+        logging.getLogger(__name__).warning(
+            "WEBHOOK_VERIFY_SIGNATURE is off: unsigned webhooks are accepted, so anyone "
+            "with the tunnel URL can send commands. Development only."
+        )
     service = AgentService(settings)
     await service.open()
     app.state.agent_service = service
@@ -157,7 +162,7 @@ def create_app() -> FastAPI:
         x_hub_signature_256: str | None = Header(default=None),
     ) -> dict:
         body = await request.body()
-        if os.getenv("WEBHOOK_VERIFY_SIGNATURE", "true").strip().lower() not in {"0", "false", "no"}:
+        if webhook_verify_signature():
             # Fail closed: without a secret anyone could forge an authorized user's comment.
             secret = os.getenv("GITHUB_WEBHOOK_SECRET", "").strip()
             if not secret:

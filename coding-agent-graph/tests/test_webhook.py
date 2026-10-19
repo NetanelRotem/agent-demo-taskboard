@@ -212,8 +212,9 @@ def test_other_pull_request_actions_are_ignored(client, service):
     assert service.items == []
 
 
-def test_signature_check_can_be_disabled_for_development(client, service, monkeypatch):
-    monkeypatch.setenv("WEBHOOK_VERIFY_SIGNATURE", "false")
+@pytest.mark.parametrize("flag", ["false", "off", "0", "NO"])
+def test_signature_check_can_be_disabled_for_development(client, service, monkeypatch, flag):
+    monkeypatch.setenv("WEBHOOK_VERIFY_SIGNATURE", flag)
     monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)
     body = json.dumps(make_payload()).encode()
     response = client.post(
@@ -222,3 +223,14 @@ def test_signature_check_can_be_disabled_for_development(client, service, monkey
     )
     assert response.status_code == 202
     assert len(service.items) == 1
+
+
+def test_empty_flag_keeps_signature_check_on(client, service, monkeypatch):
+    monkeypatch.setenv("WEBHOOK_VERIFY_SIGNATURE", "")
+    body = json.dumps(make_payload()).encode()
+    response = client.post(
+        "/webhooks/github", content=body,
+        headers={"X-GitHub-Event": "issue_comment", "X-GitHub-Delivery": "dev-2"},
+    )
+    assert response.status_code == 401
+    assert service.items == []

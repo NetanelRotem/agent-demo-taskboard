@@ -31,6 +31,19 @@ def _github_token() -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+FALSE_VALUES = {"0", "false", "no", "off"}
+
+
+def env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return default if not value else value not in FALSE_VALUES
+
+
+def webhook_verify_signature() -> bool:
+    """Read per request, so flipping the flag in tests or .env needs no new Settings."""
+    return env_flag("WEBHOOK_VERIFY_SIGNATURE", True)
+
+
 def _plan_approval(value: str) -> str:
     value = value.strip().lower()
     if value == "auto":
@@ -105,8 +118,7 @@ class Settings:
             langfuse_enabled=bool(
                 os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")
             )
-            and os.getenv("LANGFUSE_TRACING_ENABLED", "true").lower()
-            not in {"0", "false", "no", "off"},
+            and env_flag("LANGFUSE_TRACING_ENABLED", True),
             plan_approval=_plan_approval(os.getenv("REQUIRE_PLAN_APPROVAL", "true")),
             auto_approve_max_steps=int(os.getenv("AUTO_APPROVE_MAX_STEPS", "4")),
             execution_mode=execution_mode,

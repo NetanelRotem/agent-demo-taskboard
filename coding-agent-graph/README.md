@@ -102,11 +102,12 @@ Don't run the agent server with `--reload`: SQLite checkpoints and workspaces ch
 
 On Windows with several Python versions installed, create the environment with `py -3.13 -m venv .venv`.
 
-Set these in `.env`:
+Set these in `.env`. Every variable is explained by a comment in [.env.example](.env.example), with its default and the mode it applies to.
 
-- `GITHUB_TOKEN`: reads Issues, writes comments, and later pushes and opens PRs. If empty, the service uses the local token from `gh auth token`. The token is not validated up front.
+- `GITHUB_TOKEN`: reads Issues, writes comments and opens PRs. In local mode it also pushes; in cloud mode the sandbox pushes with the `github` cloud secret instead. If empty, the service uses `GH_TOKEN`, then the local token from `gh auth token`. The token is not validated up front.
+- `GITHUB_WEBHOOK_SECRET` and `WEBHOOK_VERIFY_SIGNATURE`: see [Webhook signatures](#webhook-signatures).
 - `AUTHORIZED_GITHUB_USERS`: comma-separated list of users allowed to command the agent.
-- `OPENROUTER_API_KEY`: passed only to the Pi process.
+- `OPENROUTER_API_KEY`: passed only to the Pi process in local mode. In cloud mode the key lives in Docker's secret store instead.
 - `OPENROUTER_MODEL`: defaults to `z-ai/glm-5.3`.
 - `REQUIRE_PLAN_APPROVAL` and `AUTO_APPROVE_MAX_STEPS`: see [Plan approval](#plan-approval).
 
@@ -128,9 +129,16 @@ If the keys are not set, Langfuse is off and the service works unchanged. Set `L
 
 ### Webhook signatures
 
-Every webhook is checked against `GITHUB_WEBHOOK_SECRET`: the server computes an HMAC-SHA256 of the request body and compares it to the `X-Hub-Signature-256` header. A missing or wrong signature returns `401`. If no secret is configured, the server refuses every webhook (`500`), so nobody can forge a payload in an authorized user's name. To generate a secret: `python -c "import secrets; print(secrets.token_hex(32))"`.
+Every webhook is checked against `GITHUB_WEBHOOK_SECRET`: the server computes an HMAC-SHA256 of the request body and compares it to the `X-Hub-Signature-256` header. A missing or wrong signature returns `401`. If no secret is configured, the server refuses every webhook (`500`), so nobody can forge a payload in an authorized user's name.
 
-During development you can turn the check off with `WEBHOOK_VERIFY_SIGNATURE=false`: the server then accepts any webhook without a signature or a secret. The tunnel is public, so in this mode anyone who knows the address can send a command as an authorized user. Set it back to `true` (the default) before exposing the server for real.
+To set it up:
+
+1. Generate a secret: `python -c "import secrets; print(secrets.token_hex(32))"`.
+2. Put it in `.env` as `GITHUB_WEBHOOK_SECRET=<secret>`, with `WEBHOOK_VERIFY_SIGNATURE=true`.
+3. In GitHub, open **Settings → Webhooks →** your webhook **→ Edit**, paste the same value into **Secret** and click **Update webhook**. GitHub never shows a saved secret again, so keep it in `.env`.
+4. Restart the server. Under **Recent Deliveries**, **Redeliver** an old delivery: `202` means the secrets match, `401` means they don't.
+
+The `WEBHOOK_VERIFY_SIGNATURE` flag controls the check. It is on by default and when the variable is empty; `false`, `off`, `0` and `no` turn it off. With the check off, the server accepts any webhook without a signature or a secret and logs a warning on startup. The tunnel is public, so in this mode anyone who knows the address can send a command as an authorized user. Use it only during development, and turn it back on before exposing the server for real.
 
 The remaining defaults are documented in `.env.example`. LangGraph state, requests, tool events, workspaces and Pi sessions are stored under `.agent-data` and are not committed to Git.
 

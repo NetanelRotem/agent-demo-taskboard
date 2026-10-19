@@ -35,6 +35,7 @@ flowchart LR
 | Network error talking to Docker | `sbx` retries after 3, 10 and 30 seconds, and only for errors that happen before the request reached the sandbox. |
 | Sandbox in the middle of stopping | Wait for it to settle (up to 5 minutes), then retry. |
 | Checks failed | Up to 3 implementation attempts, each one given the failing output. |
+| Webhook rejected with `401` | The signature doesn't match: the **Secret** in GitHub differs from `GITHUB_WEBHOOK_SECRET` in `.env`. Nothing is stored or run. Fix the value on either side, restart the server, and **Redeliver** from the webhook's Recent Deliveries. A `500` means no secret is configured while the check is on. |
 | Telegram unavailable | Delivery runs in a background queue and never blocks the run. The event stays in SQLite. |
 
 ## Design considerations

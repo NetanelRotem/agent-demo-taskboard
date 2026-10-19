@@ -55,7 +55,7 @@ flowchart TB
 
 | File | Responsibility |
 |------|----------------|
-| [main.py](../coding-agent-graph/main.py) | Receives webhooks, verifies the signature (can be disabled for development with `WEBHOOK_VERIFY_SIGNATURE=false`), stores every comment and review in the `comments` table, filters out irrelevant events (bots, comments without `/agent`) and parses the command. |
+| [main.py](../coding-agent-graph/main.py) | Receives webhooks, verifies the HMAC signature against `GITHUB_WEBHOOK_SECRET` (on by default; the `WEBHOOK_VERIFY_SIGNATURE` flag turns it off for development), stores every comment and review in the `comments` table, filters out irrelevant events (bots, comments without `/agent`) and parses the command. |
 | [commands.py](../coding-agent-graph/commands.py) | Parses `/agent ...` into an `AgentCommand`. |
 | [service.py](../coding-agent-graph/service.py) | Checks authorization, stores the work item in SQLite and returns `202`. A single worker processes the queue and drives the graph. |
 | [agent_graph.py](../coding-agent-graph/agent_graph.py) | The graph: loading the Issue, planning, deciding whether approval is needed, waiting for a person, implementing, checks and the PR. See [04](04-state-graph.md). |
