@@ -269,7 +269,7 @@ const FILTERS = [
   ["all", "All", () => true],
   ["active", "Active", r => !r.terminal],
   ["human", "Needs you", r => r.needs_human || r.status === "reviewing"],
-  ["done", "Done", r => ["merged", "closed", "published"].includes(r.status)],
+  ["done", "Done", r => ["merged", "closed", "published", "no_changes"].includes(r.status)],
   ["failed", "Failed", r => ["failed", "stopped"].includes(r.status)],
 ];
 
@@ -309,7 +309,7 @@ const clock = v => t(v)?.toLocaleTimeString("en-GB", { hour: "2-digit", minute: 
 const dateLabel = v => t(v)?.toLocaleDateString("en-GB", { month: "short", day: "numeric" }) ?? "";
 
 function statusPill(status, needsHuman) {
-  const cls = { merged: "ok", published: "ok", closed: "", failed: "bad", stopped: "bad", superseded: "",
+  const cls = { merged: "ok", published: "ok", no_changes: "ok", closed: "", failed: "bad", stopped: "bad", superseded: "",
                 waiting_for_human: "warn", reviewing: "warn" }[status];
   const label = { waiting_for_human: "needs you", reviewing: "in review", implementing_review: "fixing review",
                   verifying_review: "verifying review", reading_review: "reading review" }[status] || status.replace(/_/g, " ");

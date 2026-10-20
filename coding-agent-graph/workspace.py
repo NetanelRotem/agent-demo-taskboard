@@ -48,6 +48,7 @@ class VerificationResult:
     changed_files: list[str] = field(default_factory=list)
     checks: list[dict] = field(default_factory=list)
     revision: str = ""
+    no_changes: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -56,6 +57,7 @@ class VerificationResult:
             "changed_files": self.changed_files,
             "checks": self.checks,
             "revision": self.revision,
+            "no_changes": self.no_changes,
         }
 
 
@@ -170,7 +172,7 @@ class WorkspaceManager:
     async def verify(self, worktree: Path) -> VerificationResult:
         changed = await self.changed_files(worktree)
         if not changed:
-            return VerificationResult(False, "Pi did not produce any code changes.")
+            return VerificationResult(False, "Pi did not produce any code changes.", no_changes=True)
 
         allowed_prefix = self.settings.todo_path.rstrip("/") + "/"
         forbidden = [name for name in changed if not name.startswith(allowed_prefix)]

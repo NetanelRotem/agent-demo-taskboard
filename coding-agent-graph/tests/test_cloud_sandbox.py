@@ -169,7 +169,7 @@ async def test_cloud_pi_runs_through_sbx_exec_and_ignores_progress_lines(tmp_pat
     assert result.status == "completed"
     args = captured["args"]
     assert args[1:5] == ["--cloud", "exec", "-i", "agent-issue-5-run"]
-    assert args[5:9] == ["bash", HELPER, "pi", "completed,needs_input,failed"]
+    assert args[5:9] == ["bash", HELPER, "pi", "completed,needs_input,no_changes,failed"]
     assert args[args.index("--extension") + 1] == REMOTE_EXTENSION
     assert captured["cwd"] is None
     assert "GITHUB_TOKEN" not in captured["env"]

@@ -323,7 +323,7 @@ class AgentStore:
         return dict(row) if row else None
 
     async def get_active_run(self, repo: str, issue_number: int) -> dict[str, Any] | None:
-        terminal = ("failed", "stopped", "published", "merged", "closed", "superseded")
+        terminal = ("failed", "stopped", "published", "merged", "closed", "superseded", "no_changes")
         placeholders = ",".join("?" for _ in terminal)
         cursor = await self._db().execute(
             f"""SELECT * FROM runs

@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 PAGE = Path(__file__).with_name("dashboard.html")
-TERMINAL = {"failed", "stopped", "published", "merged", "closed", "superseded"}
+TERMINAL = {"failed", "stopped", "published", "merged", "closed", "superseded", "no_changes"}
 
 # The flow every run moves through, in order; each run status maps to the stage it is in.
 STAGES = [
@@ -545,7 +545,7 @@ def build_stages(run: dict[str, Any], items: list[dict[str, Any]]) -> list[dict[
     out = []
     for index, (key, label) in enumerate(STAGES):
         span = spans.get(key)
-        if run["status"] in {"merged", "closed", "published"}:
+        if run["status"] in {"merged", "closed", "published", "no_changes"}:
             state = "done" if span or key == "done" else "skipped"
         elif failed and key == current:
             state = "failed"

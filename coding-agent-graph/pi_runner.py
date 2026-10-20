@@ -24,8 +24,8 @@ EventSink = Callable[[str, str, dict], Awaitable[None]]
 
 RESULT_TOOL = "submit_result"
 RESULT_EXTENSION = Path(__file__).resolve().parent / "pi_extensions" / "submit_result.ts"
-PLAN_STATUSES = ("ready", "needs_input", "failed")
-IMPLEMENT_STATUSES = ("completed", "needs_input", "failed")
+PLAN_STATUSES = ("ready", "needs_input", "no_changes", "failed")
+IMPLEMENT_STATUSES = ("completed", "needs_input", "no_changes", "failed")
 CancelCheck = Callable[[str], Awaitable[bool]]
 EVENT_LINE_LIMIT = 64 * 1024 * 1024
 

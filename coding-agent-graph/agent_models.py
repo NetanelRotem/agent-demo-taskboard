@@ -41,7 +41,7 @@ class AgentCommand:
 
 
 class PiResult(BaseModel):
-    status: Literal["ready", "needs_input", "completed", "failed"]
+    status: Literal["ready", "needs_input", "completed", "no_changes", "failed"]
     summary: str = ""
     plan: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)

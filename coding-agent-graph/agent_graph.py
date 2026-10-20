@@ -16,6 +16,7 @@ from pi_runner import PiError, PiRunner, PiStopped
 from storage import AgentStore
 from workspace import VerificationResult, WorkspaceError, WorkspaceManager
 
+NO_CHANGES_SUMMARY = "The current code already meets the requirements."
 
 def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -205,7 +206,8 @@ Requirements:
 Prior human decisions:
 {decisions}
 
-Finish by calling the submit_result tool with status ready, needs_input, or failed.
+Finish by calling the submit_result tool with status ready, needs_input, no_changes, or failed.
+If the current code already meets every requirement, use status no_changes and say in the summary where it is already implemented.
 The plan must be short and include acceptance criteria and concrete repository checks. Ask only questions that materially change behavior; infer ordinary technical choices from the code. Use status needs_input only for such questions.
 
 Also rate the change with complexity and complexity_reason (one sentence):
@@ -232,6 +234,8 @@ When in doubt, choose complex: a person will then review the plan before any cod
 
         if result.status == "failed":
             return {"final_status": "failed", "final_summary": result.summary or "Pi planning failed."}
+        if result.status == "no_changes":
+            return {"final_status": "no_changes", "final_summary": result.summary or NO_CHANGES_SUMMARY}
 
         version = state.get("plan_version", 0) + 1
         pending_kind = "clarification" if result.status == "needs_input" or result.questions else "approval"
@@ -418,6 +422,12 @@ When in doubt, choose complex: a person will then review the plan before any cod
                 "questions": result.questions,
                 "pi_summary": result.summary,
             }
+        if result.status == "no_changes" and state.get("workflow_phase") != "review":
+            return {
+                "attempt": attempt,
+                "final_status": "no_changes",
+                "final_summary": result.summary or NO_CHANGES_SUMMARY,
+            }
         if result.status != "completed":
             summary = result.summary or failure_summary
             return {
@@ -447,7 +457,8 @@ Verification feedback from a previous attempt:
 
 Read and edit the real files, then run the relevant checks. Stay strictly inside {self.settings.todo_path}; do not edit secrets, {Path(__file__).resolve().parent.name}, .github, or deployment files. Do not use GitHub credentials, push, open a PR, or merge.
 If a new product decision is genuinely required, stop and return needs_input.
-Finish by calling the submit_result tool with status completed, needs_input, or failed.
+If the current code already meets every requirement and nothing needs to change, return no_changes and say where it is already implemented.
+Finish by calling the submit_result tool with status completed, needs_input, no_changes, or failed.
 """
         return await self._implement(
             state,
@@ -540,6 +551,14 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
                 revision=result.revision,
             )
         update: dict[str, Any] = {"verification": result.as_dict()}
+        if result.no_changes and state.get("workflow_phase") != "review":
+            # Nothing to commit is an outcome, not a failure: retrying would not change it.
+            await self._emit(state, "no_changes", "Pi made no code changes; nothing to publish.")
+            return {
+                **update,
+                "final_status": "no_changes",
+                "final_summary": state.get("pi_summary") or NO_CHANGES_SUMMARY,
+            }
         if result.passed:
             await self._emit(
                 state, "verification_passed",
@@ -575,6 +594,8 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
     def after_verify(
         self, state: AgentState
     ) -> Literal["retry", "review_retry", "publish", "push", "finish"]:
+        if state.get("final_status") == "no_changes":
+            return "finish"
         if state.get("verification", {}).get("passed"):
             return "push" if state.get("workflow_phase") == "review" else "publish"
         if state.get("attempt", 0) >= self.settings.max_attempts:
@@ -592,14 +613,22 @@ Finish by calling the submit_result tool with status completed, needs_input, or 
             f"- {item['command']}: {'passed' if item['passed'] else 'failed'}"
             for item in checks
         ) or "- Not run"
-        body = (
-            f"### Agent run `{state['run_id'][:8]}` — {status}\n\n"
-            f"{state.get('final_summary') or state.get('pi_summary') or 'Run finished.'}\n\n"
-            f"**Branch:** `{state.get('branch', 'not created')}`\n\n"
-            f"**Changed files:**\n{files_text}\n\n"
-            f"**Checks:**\n{checks_text}\n\n"
-            "No merge was performed. Inspect the preserved worktree and logs before retrying."
-        )
+        if status == "no_changes":
+            body = (
+                f"### Agent run `{state['run_id'][:8]}` — nothing to change\n\n"
+                f"{state.get('final_summary') or NO_CHANGES_SUMMARY}\n\n"
+                "No pull request was opened. If the issue is already resolved it can be closed; "
+                "otherwise clarify what is missing and run `/agent start` again."
+            )
+        else:
+            body = (
+                f"### Agent run `{state['run_id'][:8]}` — {status}\n\n"
+                f"{state.get('final_summary') or state.get('pi_summary') or 'Run finished.'}\n\n"
+                f"**Branch:** `{state.get('branch', 'not created')}`\n\n"
+                f"**Changed files:**\n{files_text}\n\n"
+                f"**Checks:**\n{checks_text}\n\n"
+                "No merge was performed. Inspect the preserved worktree and logs before retrying."
+            )
         request_id = f"{state['run_id'][:8]}-finish-{_content_hash(body)[:8]}"
         request = await self.store.ensure_request(
             request_id, state["run_id"], "finish", state.get("plan_version", 0), _content_hash(body)

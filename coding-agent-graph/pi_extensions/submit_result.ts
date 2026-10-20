@@ -14,7 +14,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
-const ALL_STATUSES = ["ready", "needs_input", "completed", "failed"];
+const ALL_STATUSES = ["ready", "needs_input", "completed", "no_changes", "failed"];
 
 function allowedStatuses(): string[] {
 	const configured = (process.env.CODING_AGENT_RESULT_STATUSES ?? "")

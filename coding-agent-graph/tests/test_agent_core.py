@@ -24,7 +24,7 @@ from pi_runner import PiError, PiRunner, _parse_result
 from pi_logs import format_event
 from service import AgentService, WorkItem
 from storage import AgentStore
-from workspace import WorkspaceManager, _command_environment
+from workspace import VerificationResult, WorkspaceManager, _command_environment
 
 
 def settings(tmp_path: Path, users=frozenset({"alice"})) -> Settings:
@@ -922,7 +922,7 @@ async def test_pi_result_comes_from_submit_result_tool(tmp_path, monkeypatch):
     args = list(captured["args"])
     assert args[args.index("--tools") + 1].endswith(",submit_result")
     assert args[args.index("--extension") + 1].endswith("submit_result.ts")
-    assert captured["env"]["CODING_AGENT_RESULT_STATUSES"] == "ready,needs_input,failed"
+    assert captured["env"]["CODING_AGENT_RESULT_STATUSES"] == "ready,needs_input,no_changes,failed"
 
 
 @pytest.mark.asyncio
@@ -1055,3 +1055,75 @@ async def test_failed_start_closes_its_run_so_the_retry_starts_fresh(tmp_path):
         assert (await service.store.get_active_run("a/b", 1))["status"] == "starting"
     finally:
         await service.store.close()
+
+
+async def _no_changes_graph(tmp_path, pi_result):
+    class Pi:
+        async def run(self, **kwargs):
+            return pi_result
+
+    github = FakeGitHub()
+    store = AgentStore(tmp_path / "agent.sqlite3")
+    await store.open()
+    await store.create_run({"run_id": "run-1234", "thread_id": "t", "repo": "a/b", "issue_number": 1})
+    graph = object.__new__(CodingAgentGraph)
+    graph.settings = settings(tmp_path)
+    graph.pi = Pi()
+    graph.store = store
+    graph.github = github
+    graph._emit = lambda *args, **kwargs: asyncio.sleep(0)
+    state = {
+        "run_id": "run-1234", "repo": "a/b", "issue_number": 1, "branch": "agent/issue-1",
+        "pi_session_id": "s", "worktree": str(tmp_path), "requirements_version": "v",
+        "plan": ["check title"], "plan_version": 1, "attempt": 0,
+        "issue_context": IssueContext(
+            repo="a/b", number=1, title="t", requirements_version="v"
+        ).model_dump(),
+    }
+    return graph, github, store, state
+
+
+@pytest.mark.asyncio
+async def test_plan_with_nothing_to_change_finishes_without_approval(tmp_path):
+    graph, github, store, state = await _no_changes_graph(
+        tmp_path, PiResult(status="no_changes", summary="Title already set in index.html:7")
+    )
+    update = await graph.plan_with_pi(state)
+    assert update["final_status"] == "no_changes"
+    assert graph.after_plan({**state, **update}) == "finish"
+    await graph.finish({**state, **update})
+    assert len(github.comments) == 1
+    assert "nothing to change" in github.comments[0]
+    assert "Title already set in index.html:7" in github.comments[0]
+    assert (await store.get_run("run-1234"))["status"] == "no_changes"
+    assert await store.get_active_run("a/b", 1) is None
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_implementation_without_a_diff_finishes_without_retrying(tmp_path):
+    class Workspace:
+        async def verify(self, worktree):
+            return VerificationResult(False, "Pi did not produce any code changes.", no_changes=True)
+
+    graph, github, store, state = await _no_changes_graph(
+        tmp_path, PiResult(status="completed", summary="Already implemented in index.html")
+    )
+    graph.workspace = Workspace()
+    state = {**state, **await graph.implement_with_pi(state)}
+    update = await graph.verify(state)
+    assert update["final_status"] == "no_changes"
+    assert update["final_summary"] == "Already implemented in index.html"
+    assert graph.after_verify({**state, **update}) == "finish"
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_implementation_reporting_no_changes_skips_verification(tmp_path):
+    graph, _, store, state = await _no_changes_graph(
+        tmp_path, PiResult(status="no_changes", summary="Nothing to do")
+    )
+    update = await graph.implement_with_pi(state)
+    assert update["final_status"] == "no_changes"
+    assert graph.after_implement({**state, **update}) == "finish"
+    await store.close()
