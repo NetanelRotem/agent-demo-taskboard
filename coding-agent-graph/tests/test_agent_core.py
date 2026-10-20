@@ -22,7 +22,7 @@ from config import Settings, _github_token
 from github_client import GitHubClient
 from pi_runner import PiError, PiRunner, _parse_result
 from pi_logs import format_event
-from service import AgentService, WorkItem
+from service import AgentService, WorkItem, trace_name
 from storage import AgentStore
 from workspace import VerificationResult, WorkspaceManager, _command_environment
 
@@ -129,10 +129,10 @@ def test_langfuse_config_adds_trace_context(tmp_path):
     service.langfuse_handler = handler
     item = WorkItem(AgentCommand("start"), "acme/todo", 7, 99, "alice")
 
-    config = service._config("thread-1", "run-1", item, "start")
+    config = service._config("thread-1", "run-1", item, "start", "Add dark mode")
 
     assert config["callbacks"] == [handler]
-    assert config["run_name"] == "coding-agent:start"
+    assert config["run_name"] == "#7 Plan · Add dark mode"
     assert config["metadata"]["langfuse_session_id"] == "run-1"
     assert config["metadata"]["langfuse_user_id"] == "alice"
     assert config["metadata"]["issue_number"] == 7
@@ -1127,3 +1127,11 @@ async def test_implementation_reporting_no_changes_skips_verification(tmp_path):
     assert update["final_status"] == "no_changes"
     assert graph.after_implement({**state, **update}) == "finish"
     await store.close()
+
+
+def test_trace_name_describes_the_step_and_issue():
+    item = WorkItem(AgentCommand("approve"), "acme/todo", 17, 1, "alice")
+    assert trace_name(item, "approve", "Fix title") == "#17 Implement (approved) · Fix title"
+    assert trace_name(item, "approve", None) == "#17 Implement (approved)"
+    assert trace_name(item, "review", "x" * 80).endswith("…")
+    assert trace_name(None, None, None) == "State"

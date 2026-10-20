@@ -53,6 +53,25 @@ async def backfill_comments(store: AgentStore, github: Any, limit: int = 50) -> 
     return count
 
 
+TRACE_ACTION_LABELS = {
+    "start": "Plan",
+    "approve": "Implement (approved)",
+    "reject": "Re-plan (rejected)",
+    "answer": "Continue (answered)",
+    "stop": "Stop",
+    "review": "Address review",
+}
+
+
+def trace_name(item: WorkItem | None, action: str | None, title: str | None) -> str:
+    """Langfuse trace name, e.g. "#17 Plan · Set the browser tab title"."""
+    label = TRACE_ACTION_LABELS.get(action or "", action or "State")
+    prefix = f"#{item.issue_number} {label}" if item else label
+    if not title:
+        return prefix
+    return f"{prefix} · {title if len(title) <= 60 else title[:59] + '…'}"
+
+
 @dataclass(frozen=True)
 class WorkItem:
     command: AgentCommand
@@ -462,7 +481,9 @@ class AgentService:
                     "approval_mode": "never" if item.command.text == "auto"
                     else self.settings.plan_approval,
                 },
-                self._config(thread_id, run_id, item, "start"),
+                self._config(
+                    thread_id, run_id, item, "start", await self._trace_title(item)
+                ),
             )
         except Exception:
             # Close this run so the worker's retry starts a fresh one instead of
@@ -514,7 +535,9 @@ class AgentService:
             return
         await self.agent_graph.graph.ainvoke(
             Command(resume=decision),
-            self._config(run["thread_id"], run["run_id"], item, item.command.name),
+            self._config(
+                run["thread_id"], run["run_id"], item, item.command.name, run.get("title")
+            ),
         )
         await self._suspend_workspace(run["run_id"])
 
@@ -539,7 +562,7 @@ class AgentService:
         run = await self.store.get_run(request["run_id"])
         if not run or run["repo"] != item.repo or run["issue_number"] != item.issue_number:
             return False
-        config = self._config(run["thread_id"], run["run_id"], item, item.command.name)
+        config = self._config(run["thread_id"], run["run_id"], item, item.command.name, run.get("title"))
         snapshot = await self.agent_graph.graph.aget_state(config)
         if not snapshot.next or any(task.interrupts for task in snapshot.tasks):
             return False
@@ -583,7 +606,7 @@ class AgentService:
         if snapshot.next:
             await self.agent_graph.graph.ainvoke(
                 Command(resume={"action": "stop", "text": ""}),
-                self._config(run["thread_id"], run["run_id"], item, "stop"),
+                self._config(run["thread_id"], run["run_id"], item, "stop", run.get("title")),
             )
         else:
             await self.store.update_run(run["run_id"], status="stopped")
@@ -639,10 +662,20 @@ class AgentService:
                 "workflow_phase": "review",
                 "final_status": "",
             },
-            self._config(review_thread_id, run["run_id"], trace_item, "review"),
+            self._config(review_thread_id, run["run_id"], trace_item, "review", run.get("title")),
         )
         logger.info("Review graph completed for run=%s", run["run_id"][:8])
         await self._suspend_workspace(run["run_id"])
+
+    async def _trace_title(self, item: WorkItem) -> str | None:
+        """The issue title for the trace name; only fetched when tracing is on."""
+        if self.langfuse_handler is None:
+            return None
+        try:
+            return await self.github.issue_title(item.repo, item.issue_number)
+        except Exception:
+            logger.warning("Could not load the title of issue #%s", item.issue_number, exc_info=True)
+            return None
 
     def _config(
         self,
@@ -650,6 +683,7 @@ class AgentService:
         run_id: str | None = None,
         item: WorkItem | None = None,
         action: str | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
         if self.langfuse_handler is None:
@@ -684,7 +718,7 @@ class AgentService:
         config.update(
             {
                 "callbacks": [self.langfuse_handler],
-                "run_name": f"coding-agent:{action or 'state'}",
+                "run_name": trace_name(item, action, title),
                 "tags": tags,
                 "metadata": metadata,
             }

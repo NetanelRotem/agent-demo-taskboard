@@ -123,7 +123,7 @@ LANGFUSE_TRACING_ENVIRONMENT=development
 LANGFUSE_TRACING_ENABLED=true
 ```
 
-Restart the server, run `/agent start`, and open **Tracing → Traces** in Langfuse. Each invocation or resume of the graph appears as `coding-agent:<action>`, and all the pieces of one run are grouped under a session equal to the `run_id`. You can also filter by `repository`, `issue_number`, `action` and the `coding-agent-graph` tag.
+Restart the server, run `/agent start`, and open **Tracing → Traces** in Langfuse. Each invocation or resume of the graph is its own trace, named after the issue, the step and the issue title, e.g. `#17 Plan · Set the browser tab title` and then `#17 Implement (approved) · Set the browser tab title`. All the traces of one run are grouped under a session equal to the `run_id` (**Tracing → Sessions**). You can also filter by `repository`, `issue_number`, `action` and the `coding-agent-graph` tag.
 
 If the keys are not set, Langfuse is off and the service works unchanged. Set `LANGFUSE_TRACING_ENABLED=false` to disable it explicitly. Note that Langfuse receives the graph state, including the Issue content, the plan and human decisions; pick a hosting option and retention policy that fit how sensitive your data is.
 
