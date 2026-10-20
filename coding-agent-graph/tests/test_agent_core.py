@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -743,6 +745,7 @@ def test_pi_environment_removes_github_credentials(tmp_path, monkeypatch):
     assert environment["GIT_CONFIG_VALUE_0"] == ""
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PATH format")
 def test_pi_environment_deduplicates_windows_path(tmp_path, monkeypatch):
     repeated = [r"C:\Windows\System32", r"C:\Program Files\nodejs"] * 100
     monkeypatch.setenv("PATH", ";".join(repeated))
@@ -753,6 +756,7 @@ def test_pi_environment_deduplicates_windows_path(tmp_path, monkeypatch):
     ]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PATH format")
 def test_workspace_commands_deduplicate_windows_path(monkeypatch):
     repeated = [r"C:\Windows\System32", r"C:\Program Files\nodejs"] * 100
     monkeypatch.setenv("PATH", ";".join(repeated))
@@ -1019,3 +1023,35 @@ def test_auto_mode_only_skips_approval_for_small_simple_plans(tmp_path, mode, co
     assert approved is expected
     if mode == "auto":
         assert reason
+
+
+@pytest.mark.asyncio
+async def test_failed_start_closes_its_run_so_the_retry_starts_fresh(tmp_path):
+    class FlakyGraph:
+        def __init__(self):
+            self.calls = 0
+
+        async def ainvoke(self, value, config):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("sandbox listing broke")
+
+    github = FakeGitHub()
+    service = AgentService(settings(tmp_path), github=github)
+    await service.store.open()
+    try:
+        graph = FlakyGraph()
+        service.agent_graph = SimpleNamespace(graph=graph)
+        service._suspend_workspace = lambda run_id: asyncio.sleep(0)
+        item = WorkItem(AgentCommand("start"), "a/b", 1, 10, "alice")
+
+        with pytest.raises(RuntimeError):
+            await service._start(item)
+        assert await service.store.get_active_run("a/b", 1) is None
+
+        await service._start(item)
+        assert graph.calls == 2
+        assert not any("already active" in comment for comment in github.comments)
+        assert (await service.store.get_active_run("a/b", 1))["status"] == "starting"
+    finally:
+        await service.store.close()
