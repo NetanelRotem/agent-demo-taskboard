@@ -346,7 +346,7 @@ function App() {
             type="button"
             onClick={clearCompleted}
           >
-            ניקוי משימות שהושלמו
+            clear dones
           </button>
         )}
       </section>
