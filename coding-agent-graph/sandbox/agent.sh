@@ -37,8 +37,8 @@ case "$cmd" in
     repo=${1:?repo}; branch=${2:?branch}; main=${3:?main branch}
     wait_for_github
     gh auth setup-git
-    git config --global user.name "coding-agent"
-    git config --global user.email "coding-agent@users.noreply.github.com"
+    git config --global user.name "Netanel Coding Agent"
+    git config --global user.email "21604616+NetanelRotem@users.noreply.github.com"
     if [ ! -d "$REPO_DIR/.git" ]; then
       mkdir -p "$(dirname "$REPO_DIR")"
       gh repo clone "$repo" "$REPO_DIR"

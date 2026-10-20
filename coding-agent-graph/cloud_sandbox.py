@@ -113,7 +113,11 @@ class SandboxClient:
 
     async def status(self, name: str) -> str | None:
         _, out, _ = await self.run("ls", "--json", timeout=60)
-        for sandbox in json.loads(out or "{}").get("sandboxes") or []:
+        listing = json.loads(out or "[]")
+        # Newer sbx versions print a bare list; older ones wrap it in {"sandboxes": [...]}.
+        if isinstance(listing, dict):
+            listing = listing.get("sandboxes") or []
+        for sandbox in listing:
             if sandbox.get("name") == name:
                 return str(sandbox.get("status") or "")
         return None
@@ -211,7 +215,7 @@ class SandboxClient:
                 "--name", name,
                 "--ttl", self.settings.sandbox_ttl,
                 "--on-timeout", "stop",
-                "-q",
+                "--no-progress",
                 self.settings.sandbox_kit,
                 timeout=900,
             )

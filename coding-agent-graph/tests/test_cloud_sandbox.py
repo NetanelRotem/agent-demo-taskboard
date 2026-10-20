@@ -196,6 +196,26 @@ async def test_sandbox_exec_retries_while_sandbox_is_stopping(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "listing",
+    [
+        [{"name": "box", "status": "running"}],
+        {"sandboxes": [{"name": "box", "status": "running"}]},
+    ],
+)
+async def test_sandbox_status_reads_bare_and_wrapped_listings(tmp_path, monkeypatch, listing):
+    client = SandboxClient(cloud_settings(tmp_path))
+
+    async def fake_run(*args, input=None, timeout=300, check=True):
+        return 0, json.dumps(listing), ""
+
+    monkeypatch.setattr(client, "run", fake_run)
+
+    assert await client.status("box") == "running"
+    assert await client.status("other") is None
+
+
+@pytest.mark.asyncio
 async def test_sandbox_ensure_creates_with_ttl_policy_and_uploads_helpers(tmp_path, monkeypatch):
     client = SandboxClient(cloud_settings(tmp_path))
     runs: list[tuple] = []

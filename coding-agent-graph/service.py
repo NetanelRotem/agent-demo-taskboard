@@ -450,19 +450,25 @@ class AgentService:
                 "status": "starting",
             }
         )
-        await self.agent_graph.graph.ainvoke(
-            {
-                "repo": item.repo,
-                "issue_number": item.issue_number,
-                "run_id": run_id,
-                "thread_id": thread_id,
-                "command_name": "start",
-                "triggering_comment_id": item.comment_id,
-                "approval_mode": "never" if item.command.text == "auto"
-                else self.settings.plan_approval,
-            },
-            self._config(thread_id, run_id, item, "start"),
-        )
+        try:
+            await self.agent_graph.graph.ainvoke(
+                {
+                    "repo": item.repo,
+                    "issue_number": item.issue_number,
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "command_name": "start",
+                    "triggering_comment_id": item.comment_id,
+                    "approval_mode": "never" if item.command.text == "auto"
+                    else self.settings.plan_approval,
+                },
+                self._config(thread_id, run_id, item, "start"),
+            )
+        except Exception:
+            # Close this run so the worker's retry starts a fresh one instead of
+            # finding it still "active" and giving up.
+            await self.store.update_run(run_id, status="failed")
+            raise
         await self._suspend_workspace(run_id)
 
     async def _resume(self, item: WorkItem) -> None:
