@@ -201,9 +201,21 @@ function App() {
     )
   }
 
+  function clearCompleted() {
+    setTodos((current) =>
+      current.map((todo) =>
+        !todo.deletedAt && todo.completed
+          ? { ...todo, deletedAt: Date.now() }
+          : todo,
+      ),
+    )
+  }
+
   const openCount = todos.filter(
     (todo) => !todo.deletedAt && !todo.completed,
   ).length
+
+  const hasCompleted = todos.some((todo) => !todo.deletedAt && todo.completed)
 
   return (
     <main className="app">
@@ -326,6 +338,16 @@ function App() {
               )
             })}
           </ul>
+        )}
+
+        {hasCompleted && (
+          <button
+            className="clear-completed"
+            type="button"
+            onClick={clearCompleted}
+          >
+            ניקוי משימות שהושלמו
+          </button>
         )}
       </section>
 
