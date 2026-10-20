@@ -238,6 +238,9 @@ function App() {
             id="new-todo"
             value={text}
             onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setText('')
+            }}
             placeholder="מה צריך לעשות?"
           />
           <label className="sr-only" htmlFor="new-todo-priority">
