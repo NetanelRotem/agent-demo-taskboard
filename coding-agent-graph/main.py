@@ -8,6 +8,7 @@ import html
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -117,9 +118,39 @@ def extract_comment(event: str | None, payload: dict) -> dict | None:
     return comment_record(source, repo, int(number), item)
 
 
+def server_address(argv: list[str]) -> str:
+    """Base URL from uvicorn's --host/--port arguments, falling back to its defaults."""
+    options = {"--host": "127.0.0.1", "--port": "8000"}
+    for index, arg in enumerate(argv):
+        name, _, value = arg.partition("=")
+        if name in options:
+            options[name] = value or (argv[index + 1] if index + 1 < len(argv) else options[name])
+    host = options["--host"]
+    if host in {"0.0.0.0", "::", ""}:
+        host = "localhost"
+    return f"http://{host}:{options['--port']}"
+
+
+def startup_links(base: str, settings: Settings) -> str:
+    lines = [
+        ("Dashboard", f"{base}/dashboard"),
+        ("Graph", f"{base}/graph"),
+        ("Health", f"{base}/health"),
+        ("API docs", f"{base}/docs"),
+        ("Webhook", f"{base}/webhooks/github"),
+    ]
+    if settings.langfuse_enabled:
+        lines.append(("Langfuse", os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")))
+    width = max(len(label) for label, _ in lines)
+    return "Available links:\n" + "\n".join(f"  {label:<{width}}  {url}" for label, url in lines)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
+    logging.getLogger(__name__).info(
+        startup_links(server_address(sys.argv), settings)
+    )
     if not webhook_verify_signature():
         logging.getLogger(__name__).warning(
             "WEBHOOK_VERIFY_SIGNATURE is off: unsigned webhooks are accepted, so anyone "

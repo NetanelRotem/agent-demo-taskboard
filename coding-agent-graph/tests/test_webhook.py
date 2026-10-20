@@ -234,3 +234,21 @@ def test_empty_flag_keeps_signature_check_on(client, service, monkeypatch):
     )
     assert response.status_code == 401
     assert service.items == []
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["uvicorn", "main:app"], "http://127.0.0.1:8000"),
+        (["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000"], "http://localhost:9000"),
+        (["uvicorn", "main:app", "--host=example.local", "--port=8080"], "http://example.local:8080"),
+    ],
+)
+def test_server_address_follows_uvicorn_arguments(argv, expected):
+    assert main.server_address(argv) == expected
+
+
+def test_startup_links_list_dashboard_and_webhook():
+    text = main.startup_links("http://localhost:8000", main.Settings.from_env())
+    assert "http://localhost:8000/dashboard" in text
+    assert "http://localhost:8000/webhooks/github" in text
